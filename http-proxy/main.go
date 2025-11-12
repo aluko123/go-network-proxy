@@ -31,13 +31,15 @@ func main() {
 		log.Printf("Warning: Could not load blocklist: %v", err)
 	}
 
-	// Expose /metrics endpoint for Prometheus
-	http.Handle("/metrics", promhttp.Handler())
-
 	// Configure server
 	server := &http.Server{
 		Addr: ":8080",
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Special case: metrics endpoint
+			if r.URL.Path == "/metrics" {
+				promhttp.Handler().ServeHTTP(w, r)
+				return
+			}
 
 			//metrics timing start
 			start := time.Now()
