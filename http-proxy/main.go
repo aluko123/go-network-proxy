@@ -11,9 +11,11 @@ import (
 
 	"github.com/aluko123/go-network-proxy/http-proxy/blocklist"
 	"github.com/aluko123/go-network-proxy/http-proxy/handlers"
+	"github.com/aluko123/go-network-proxy/http-proxy/limit"
 	"github.com/aluko123/go-network-proxy/http-proxy/metrics"
 	"github.com/aluko123/go-network-proxy/http-proxy/tunnel"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"golang.org/x/time/rate"
 )
 
 type statusRecorder struct {
@@ -50,13 +52,41 @@ func main() {
 		log.Printf("Warning: Could not load blocklist: %v", err)
 	}
 
+	// Initialize rate limiter (5 req/s per IP, burst of 5)
+	rateLimiter := limit.NewIPRateLimiter(rate.Limit(100), 20)
+
+	// Cleanup stale rate limiters every 10 minutes
+	go func() {
+		ticker := time.NewTicker(10 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			rateLimiter.CleanupStale(10 * time.Minute)
+			log.Println("Cleaned up stale rate limiters")
+		}
+	}()
+
 	// Configure server
 	server := &http.Server{
 		Addr: ":8080",
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Special case: metrics endpoint
+			// Special case: metrics endpoint (skip rate limiting)
 			if r.URL.Path == "/metrics" {
 				promhttp.Handler().ServeHTTP(w, r)
+				return
+			}
+			//log.Println("Testing Rate Limiter...")
+			// Rate limiting check
+			ip := limit.GetIP(r)
+			limiter := rateLimiter.GetLimiter(ip)
+
+			// // DEBUG: check every 10th request
+			// if limiter.Tokens() < 50 {
+			// 	log.Printf("DEBUG: IP=%s, Tokens=%.2f, RemoteAddr=%s", ip, limiter.Tokens(), r.RemoteAddr)
+			// }
+
+			if !limiter.Allow() {
+				//log.Printf("Rate limit exceeded for IP: %s", ip)
+				http.Error(w, "Rate limit exceeded. Try again later.", http.StatusTooManyRequests)
 				return
 			}
 
