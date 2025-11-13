@@ -5,7 +5,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
-
 var (
 	// Counter: Total requests
 	RequestsTotal = promauto.NewCounterVec(
@@ -27,8 +26,8 @@ var (
 	// Histogram: Request duration
 	RequestDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name: "proxy_request_duration_seconds",
-			Help: "Request duration in seconds",
+			Name:    "proxy_request_duration_seconds",
+			Help:    "Request duration in seconds",
 			Buckets: prometheus.DefBuckets,
 		},
 		[]string{"method"},
@@ -40,5 +39,14 @@ var (
 			Name: "proxy_active_connections",
 			Help: "Number of active proxy connections",
 		},
+	)
+
+	// aggregate broken down status codes
+	StatusCodeCounter = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "proxy_requests_by_status_class_total",
+			Help: "Total requests by status class",
+		},
+		[]string{"status_class"},
 	)
 )

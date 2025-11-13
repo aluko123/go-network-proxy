@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/tls"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -15,6 +16,22 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
+type statusRecorder struct {
+	http.ResponseWriter
+	statusCode  int
+	wroteHeader bool
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	if r.wroteHeader {
+		return
+	}
+
+	r.statusCode = code
+	r.wroteHeader = true
+	r.ResponseWriter.WriteHeader(code)
+}
+
 func main() {
 	// Parse command-line flags
 	var pemPath string
@@ -23,6 +40,8 @@ func main() {
 	flag.StringVar(&keyPath, "key", "server.key", "path to key file")
 	var proto string
 	flag.StringVar(&proto, "proto", "http", "protocol to use: http or https")
+	var debug bool
+	flag.BoolVar(&debug, "debug", false, "enable debug logging")
 	flag.Parse()
 
 	// Initialize blocklist manager once at startup
@@ -46,10 +65,15 @@ func main() {
 			metrics.ActiveConnections.Inc()
 			defer metrics.ActiveConnections.Dec()
 
-			//capture details of incoming request
-			log.Printf("Method: %s, Host: %s, URL: %s\n", r.Method, r.Host, r.URL.String())
-			for key, values := range r.Header {
-				log.Printf("Request Header: %s: %v", key, values)
+			//log only in debug mode
+			if debug {
+				//capture details of incoming request
+				log.Printf("Method: %s, Host: %s, URL: %s\n", r.Method, r.Host, r.URL.String())
+				for key, values := range r.Header {
+					log.Printf("Request Header: %s: %v", key, values)
+				}
+			} else {
+				log.Printf("[%s] %s", r.Method, r.Host)
 			}
 
 			host := r.Host
@@ -77,15 +101,21 @@ func main() {
 				return
 			}
 
+			//var recorder statusRecorder
+			var statusCode int = 200 // default to 200
 			if r.Method == http.MethodConnect {
 				tunnel.HandleTunneling(w, r)
 			} else {
-				handlers.HandleHTTP(w, r)
+				recorder := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
+				handlers.HandleHTTP(recorder, r)
+				statusCode = recorder.statusCode
 			}
 
 			duration := time.Since(start).Seconds()
 			metrics.RequestDuration.WithLabelValues(r.Method).Observe(duration)
-			metrics.RequestsTotal.WithLabelValues(r.Method, http.StatusText(http.StatusOK)).Inc()
+			statusClass := fmt.Sprintf("%dxx", statusCode/100)
+			metrics.StatusCodeCounter.WithLabelValues(statusClass).Inc()
+			metrics.RequestsTotal.WithLabelValues(r.Method, http.StatusText(statusCode)).Inc()
 		}),
 		// Disable HTTP/2 to avoid issues with CONNECT method
 		TLSNextProto: make(map[string]func(*http.Server, *tls.Conn, http.Handler)),
