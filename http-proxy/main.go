@@ -44,6 +44,17 @@ func main() {
 	flag.StringVar(&proto, "proto", "http", "protocol to use: http or https")
 	var debug bool
 	flag.BoolVar(&debug, "debug", false, "enable debug logging")
+	
+	// Rate limiter configuration
+	var limiterType string
+	flag.StringVar(&limiterType, "limiter", "memory", "Rate limiter type: memory or redis")
+	var redisAddr string
+	flag.StringVar(&redisAddr, "redis-addr", "localhost:6379", "Redis server address")
+	var rateLimit int
+	flag.IntVar(&rateLimit, "rate-limit", 100, "Requests per minute per IP")
+	var rateBurst int
+	flag.IntVar(&rateBurst, "rate-burst", 20, "Burst size for rate limiter")
+	
 	flag.Parse()
 
 	// Initialize blocklist manager once at startup
@@ -52,18 +63,31 @@ func main() {
 		log.Printf("Warning: Could not load blocklist: %v", err)
 	}
 
-	// Initialize rate limiter (5 req/s per IP, burst of 5)
-	rateLimiter := limit.NewIPRateLimiter(rate.Limit(100), 20)
-
-	// Cleanup stale rate limiters every 10 minutes
-	go func() {
-		ticker := time.NewTicker(10 * time.Minute)
-		defer ticker.Stop()
-		for range ticker.C {
-			rateLimiter.CleanupStale(10 * time.Minute)
-			log.Println("Cleaned up stale rate limiters")
+	// Initialize rate limiter based on flag
+	var rateLimiter limit.RateLimiter
+	var err error
+	
+	switch limiterType {
+	case "redis":
+		log.Printf("Initializing Redis rate limiter (addr: %s, limit: %d/min, burst: %d)", 
+			redisAddr, rateLimit, rateBurst)
+		rateLimiter, err = limit.NewRedisRateLimiter(redisAddr, rateLimit, time.Minute)
+		if err != nil {
+			log.Fatalf("Failed to initialize Redis rate limiter: %v", err)
 		}
-	}()
+		log.Println("✓ Redis rate limiter initialized")
+		
+	case "memory":
+		log.Printf("Initializing in-memory rate limiter (limit: %d/min, burst: %d)", 
+			rateLimit, rateBurst)
+		rateLimiter = limit.NewMemoryRateLimiter(rate.Limit(float64(rateLimit)/60), rateBurst)
+		log.Println("✓ In-memory rate limiter initialized")
+		
+	default:
+		log.Fatalf("Invalid limiter type: %s (must be 'memory' or 'redis')", limiterType)
+	}
+	
+	defer rateLimiter.Close()
 
 	// Configure server
 	server := &http.Server{
@@ -77,14 +101,14 @@ func main() {
 			//log.Println("Testing Rate Limiter...")
 			// Rate limiting check
 			ip := limit.GetIP(r)
-			limiter := rateLimiter.GetLimiter(ip)
+			//limiter := rateLimiter.GetLimiter(ip)
 
 			// // DEBUG: check every 10th request
 			// if limiter.Tokens() < 50 {
 			// 	log.Printf("DEBUG: IP=%s, Tokens=%.2f, RemoteAddr=%s", ip, limiter.Tokens(), r.RemoteAddr)
 			// }
 
-			if !limiter.Allow() {
+			if !rateLimiter.Allow(ip) {
 				//log.Printf("Rate limit exceeded for IP: %s", ip)
 				http.Error(w, "Rate limit exceeded. Try again later.", http.StatusTooManyRequests)
 				return

@@ -1,6 +1,7 @@
 package limit
 
 import (
+	"log"
 	"net"
 	"net/http"
 	"sync"
@@ -9,47 +10,76 @@ import (
 	"golang.org/x/time/rate"
 )
 
-// IPRateLimiter tracks rate limiters per IP
-type IPRateLimiter struct {
+// MemoryRateLimiter tracks rate limiters per IP
+type MemoryRateLimiter struct {
 	limiters map[string]*rate.Limiter
 	mu       sync.RWMutex
 	r        rate.Limit // requests per second
 	b        int        // burst size
+	done     chan struct{}
 }
 
-// NewIPRateLimiter creates a new IP-based rate limiter
+// NewMemoryRateLimiter creates a new IP-based rate limiter
 // r: requests per second (e.g., 100 = 100 req/s)
 // b: burst size (e.g., 10 = allow 10 requests immediately)
-func NewIPRateLimiter(r rate.Limit, b int) *IPRateLimiter {
-	return &IPRateLimiter{
+func NewMemoryRateLimiter(r rate.Limit, b int) *MemoryRateLimiter {
+	m := &MemoryRateLimiter{
 		limiters: make(map[string]*rate.Limiter),
 		r:        r,
 		b:        b,
+		done:     make(chan struct{}),
 	}
+
+	go m.cleanupLoop()
+
+	return m
 }
 
 // GetLimiter returns the rate limiter for the given IP
-func (i *IPRateLimiter) GetLimiter(ip string) *rate.Limiter {
-	i.mu.Lock()
-	defer i.mu.Unlock()
+func (m *MemoryRateLimiter) GetLimiter(ip string) *rate.Limiter {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
-	limiter, exists := i.limiters[ip]
+	limiter, exists := m.limiters[ip]
 	if !exists {
-		limiter = rate.NewLimiter(i.r, i.b)
-		i.limiters[ip] = limiter
+		limiter = rate.NewLimiter(m.r, m.b)
+		m.limiters[ip] = limiter
 	}
 
 	return limiter
 }
 
-// CleanupStale removes limiters that haven't been used in the given duration
-func (i *IPRateLimiter) CleanupStale(maxAge time.Duration) {
-	i.mu.Lock()
-	defer i.mu.Unlock()
+func (m *MemoryRateLimiter) Allow(ip string) bool {
+	limiter := m.GetLimiter(ip)
+	return limiter.Allow()
+}
 
-	// Simple cleanup: remove all limiters periodically
-	// In production, track last access time per limiter
-	i.limiters = make(map[string]*rate.Limiter)
+func (m *MemoryRateLimiter) cleanupLoop() {
+
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			m.cleanup()
+		case <-m.done:
+			return
+		}
+	}
+}
+
+// CleanupStale removes limiters that haven't been used in the given duration
+func (m *MemoryRateLimiter) cleanup() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.limiters = make(map[string]*rate.Limiter)
+	log.Println("Cleaned up stale rate limiters")
+}
+
+func (m *MemoryRateLimiter) Close() error {
+	close(m.done)
+	return nil
 }
 
 // GetIP extracts the client IP from the request
@@ -80,7 +110,7 @@ func GetIP(r *http.Request) string {
 }
 
 // Middleware returns a middleware that rate limits by IP
-func (i *IPRateLimiter) Middleware(next http.Handler) http.Handler {
+func (i *MemoryRateLimiter) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ip := GetIP(r)
 		limiter := i.GetLimiter(ip)

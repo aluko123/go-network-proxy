@@ -34,6 +34,23 @@ services:
       - prometheus
     restart: unless-stopped
 
+  redis:
+    image: redis:7-alpine
+    container_name: proxy-redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    networks:
+      - proxy-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
 networks:
   proxy-network:
     driver: bridge
@@ -41,3 +58,4 @@ networks:
 volumes:
   prometheus-data:
   grafana-data:
+  redis-data:
