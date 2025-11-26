@@ -1,13 +1,13 @@
 package middleware
 
 import (
-	"log"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/aluko123/go-network-proxy/pkg/blocklist"
 	"github.com/aluko123/go-network-proxy/pkg/limit"
+	"github.com/aluko123/go-network-proxy/pkg/logger"
 	"github.com/aluko123/go-network-proxy/pkg/metrics"
 )
 
@@ -28,6 +28,11 @@ func WithRateLimit(limiter limit.RateLimiter) Middleware {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ip := limit.GetIP(r)
 			if !limiter.Allow(ip) {
+				endpoint := r.URL.Path
+				if endpoint == "" {
+					endpoint = "proxy"
+				}
+				metrics.RateLimitedTotal.WithLabelValues(endpoint).Inc()
 				http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
 				return
 			}
@@ -51,7 +56,7 @@ func WithBlocklist(bm *blocklist.Manager) Middleware {
 
 			if bm.IsBlocked(host) {
 				metrics.BlockedRequests.Inc()
-				
+
 				if r.Method == http.MethodConnect {
 					http.Error(w, "Forbidden", http.StatusForbidden)
 				} else {
@@ -67,7 +72,7 @@ func WithBlocklist(bm *blocklist.Manager) Middleware {
 }
 
 // WithLogging returns a middleware that logs request details
-func WithLogging(debug bool) Middleware {
+func WithLogging(log *logger.Logger) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Metrics: Active Connections
@@ -76,16 +81,29 @@ func WithLogging(debug bool) Middleware {
 
 			start := time.Now()
 
-			if debug {
-				log.Printf("[%s] %s %s", r.Method, r.Host, r.URL.String())
-			} else {
-				log.Printf("[%s] %s", r.Method, r.Host)
-			}
+			//get request ID from context
+			reqID, _ := r.Context().Value(logger.RequestIDKey).(string)
+
+			// if debug {
+			// 	log.Printf("[%s] %s %s", r.Method, r.Host, r.URL.String())
+			// } else {
+			// 	log.Printf("[%s] %s", r.Method, r.Host)
+			// }
 
 			// Use our custom wrapper to capture status code
 			recorder := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
-			
+
 			next.ServeHTTP(recorder, r)
+
+			log.Info("request completed",
+				"request_id", reqID,
+				"status", recorder.statusCode,
+				"path", r.URL.Path,
+				"method", r.Method,
+				"host", r.Host,
+				"duration_ms", time.Since(start).Milliseconds(),
+				"client_ip", limit.GetIP(r),
+			)
 
 			// Metrics: Duration and Status
 			duration := time.Since(start).Seconds()

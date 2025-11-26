@@ -3,14 +3,34 @@ package worker
 import (
 	"context"
 	"io"
-	"log"
+	"log/slog"
 	"time"
 
 	pb "github.com/aluko123/go-network-proxy/inference/pb"
 	"github.com/aluko123/go-network-proxy/inference/queue"
+	"github.com/aluko123/go-network-proxy/pkg/metrics"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
+
+// Config holds worker client configuration
+type Config struct {
+	InferenceTimeout time.Duration
+}
+
+// DefaultConfig returns the default worker configuration
+func DefaultConfig() Config {
+	return Config{
+		InferenceTimeout: 5 * time.Minute,
+	}
+}
+
+var config = DefaultConfig()
+
+// SetConfig updates the worker configuration
+func SetConfig(c Config) {
+	config = c
+}
 
 // Client manages a connection to a single Python worker
 type Client struct {
@@ -43,8 +63,22 @@ func NewClient(id, address string) (*Client, error) {
 
 // ProcessRequest takes a request from the queue and streams it to the worker
 func (c *Client) ProcessRequest(req *queue.Request) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), config.InferenceTimeout)
 	defer cancel()
+
+	// Mark processing start time and record queue wait
+	req.StartTime = time.Now()
+	priorityLabel := metrics.PriorityLabel(req.Priority)
+	metrics.InferenceQueueWaitDuration.WithLabelValues(req.Model, priorityLabel).Observe(req.StartTime.Sub(req.SubmitTime).Seconds())
+
+	status := "success"
+
+	defer func() {
+		// Record processing duration
+		metrics.InferenceProcessingDuration.WithLabelValues(req.Model, c.ID).Observe(time.Since(req.StartTime).Seconds())
+		// Record worker request count
+		metrics.InferenceWorkerRequestsTotal.WithLabelValues(c.ID, status).Inc()
+	}()
 
 	// Create gRPC request
 	rpcReq := &pb.GenerateRequest{
@@ -59,7 +93,8 @@ func (c *Client) ProcessRequest(req *queue.Request) {
 	// Start streaming
 	stream, err := c.rpcClient.Generate(ctx, rpcReq)
 	if err != nil {
-		log.Printf("[%s] Error starting stream: %v", c.ID, err)
+		status = "error"
+		slog.Error("stream error", "worker_id", c.ID, "error", err)
 		req.ErrorCh <- err
 		return
 	}
@@ -72,7 +107,8 @@ func (c *Client) ProcessRequest(req *queue.Request) {
 			return
 		}
 		if err != nil {
-			log.Printf("[%s] Stream broken: %v", c.ID, err)
+			status = "error"
+			slog.Error("stream broken", "worker_id", c.ID, "error", err)
 			req.ErrorCh <- err
 			return
 		}

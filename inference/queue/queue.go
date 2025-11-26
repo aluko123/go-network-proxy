@@ -6,6 +6,7 @@ import (
 	"time"
 
 	pb "github.com/aluko123/go-network-proxy/inference/pb"
+	"github.com/aluko123/go-network-proxy/pkg/metrics"
 )
 
 // Request represents an inference request in the queue
@@ -17,6 +18,7 @@ type Request struct {
 	Temperature float32
 	Priority    int // Higher number = Higher priority
 	SubmitTime  time.Time
+	StartTime   time.Time // When worker began processing
 
 	// Channels for response handling
 	ResponseCh chan *pb.TokenResponse
@@ -65,9 +67,11 @@ func (h *RequestHeap) Pop() interface{} {
 
 // PriorityQueue manages the request heap in a thread-safe way
 type PriorityQueue struct {
-	items RequestHeap
-	mu    sync.Mutex
-	cond  *sync.Cond
+	items    RequestHeap
+	mu       sync.Mutex
+	cond     *sync.Cond
+	closed   bool
+	inflight sync.WaitGroup
 }
 
 func NewPriorityQueue() *PriorityQueue {
@@ -80,25 +84,45 @@ func NewPriorityQueue() *PriorityQueue {
 }
 
 // Push adds a request to the queue
-func (pq *PriorityQueue) Push(req *Request) {
+func (pq *PriorityQueue) Push(req *Request) bool {
 	pq.mu.Lock()
 	defer pq.mu.Unlock()
 
+	if pq.closed {
+		return false
+	}
+
+	pq.inflight.Add(1)
 	heap.Push(&pq.items, req)
+	metrics.InferenceQueueDepth.Set(float64(len(pq.items)))
 	pq.cond.Signal() // Wake up a worker
+	return true
 }
 
 // Pop blocks until a request is available, then returns the highest priority one
+// Returns nil if the queue is closed and empty
 func (pq *PriorityQueue) Pop() *Request {
 	pq.mu.Lock()
 	defer pq.mu.Unlock()
 
-	for len(pq.items) == 0 {
+	for len(pq.items) == 0 && !pq.closed {
 		pq.cond.Wait()
 	}
 
+	if len(pq.items) == 0 {
+		return nil
+	}
+
 	item := heap.Pop(&pq.items).(*Request)
+	metrics.InferenceQueueDepth.Set(float64(len(pq.items)))
+	metrics.InferenceInFlight.Inc()
 	return item
+}
+
+// Done marks a request as completed (call after processing)
+func (pq *PriorityQueue) Done() {
+	metrics.InferenceInFlight.Dec()
+	pq.inflight.Done()
 }
 
 // Len returns current queue depth
@@ -106,4 +130,17 @@ func (pq *PriorityQueue) Len() int {
 	pq.mu.Lock()
 	defer pq.mu.Unlock()
 	return len(pq.items)
+}
+
+// Close stops accepting new requests and signals workers to drain
+func (pq *PriorityQueue) Close() {
+	pq.mu.Lock()
+	pq.closed = true
+	pq.cond.Broadcast() // Wake up all waiting workers
+	pq.mu.Unlock()
+}
+
+// Wait blocks until all in-flight requests are processed
+func (pq *PriorityQueue) Wait() {
+	pq.inflight.Wait()
 }

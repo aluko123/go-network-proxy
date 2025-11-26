@@ -2,7 +2,7 @@ package router
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 
 	"github.com/aluko123/go-network-proxy/inference/queue"
 	"github.com/aluko123/go-network-proxy/inference/worker"
@@ -28,7 +28,7 @@ func NewRouter(addresses []string, pq *queue.PriorityQueue) (*Router, error) {
 			return nil, fmt.Errorf("failed to connect to worker %s: %v", addr, err)
 		}
 		r.workers = append(r.workers, w)
-		log.Printf("✓ Connected to worker %s (%s)", id, addr)
+		slog.Info("connected to worker", "worker_id", id, "addr", addr)
 	}
 
 	return r, nil
@@ -43,20 +43,32 @@ func (r *Router) Start() {
 
 // workerLoop constantly pulls from the queue and processes requests
 func (r *Router) workerLoop(w *worker.Client) {
-	log.Printf("[%s] Starting processing loop...", w.ID)
+	slog.Info("starting processing loop", "worker_id", w.ID)
 	for {
-		// 1. Block until a request is available
+		// 1. Block until a request is available (nil if queue closed)
 		req := r.queue.Pop()
+		if req == nil {
+			slog.Info("worker stopping", "worker_id", w.ID)
+			return
+		}
 
 		// 2. Process it
-		// log.Printf("[%s] Processing Request %s", w.ID, req.ID)
 		w.ProcessRequest(req)
+		r.queue.Done()
 	}
 }
 
 // Close shuts down all workers
 func (r *Router) Close() {
+	// Close the queue first (stops accepting, signals workers)
+	r.queue.Close()
+
+	// Wait for in-flight requests to complete
+	r.queue.Wait()
+
+	// Close worker connections
 	for _, w := range r.workers {
 		w.Close()
 	}
+	slog.Info("all workers stopped")
 }

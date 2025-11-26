@@ -8,6 +8,8 @@ import (
 
 	pb "github.com/aluko123/go-network-proxy/inference/pb"
 	"github.com/aluko123/go-network-proxy/inference/queue"
+	"github.com/aluko123/go-network-proxy/pkg/logger"
+	"github.com/aluko123/go-network-proxy/pkg/metrics"
 )
 
 type InferenceHandler struct {
@@ -53,9 +55,14 @@ func (h *InferenceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	reqID, ok := r.Context().Value(logger.RequestIDKey).(string)
+	if !ok {
+		reqID = fmt.Sprintf("req-%d", time.Now().UnixNano())
+	}
+
 	// 2. Create Internal Request
 	req := &queue.Request{
-		ID:          fmt.Sprintf("req-%d", time.Now().UnixNano()),
+		ID:          reqID,
 		Prompt:      reqBody.Prompt,
 		MaxTokens:   reqBody.MaxTokens,
 		Temperature: reqBody.Temperature,
@@ -67,7 +74,10 @@ func (h *InferenceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 3. Enqueue (This is non-blocking usually, but we can measure queue time here)
-	h.queue.Push(req)
+	if !h.queue.Push(req) {
+		http.Error(w, "Service shutting down", http.StatusServiceUnavailable)
+		return
+	}
 
 	// 4. Stream Response
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -80,14 +90,39 @@ func (h *InferenceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Metrics tracking
+	priorityLabel := metrics.PriorityLabel(req.Priority)
+	var firstTokenReceived bool
+	var lastTokenCount int32
+	status := "success"
+
+	defer func() {
+		// Record end-to-end duration
+		metrics.InferenceRequestDuration.WithLabelValues(req.Model).Observe(time.Since(req.SubmitTime).Seconds())
+		// Record request count with final status
+		metrics.InferenceRequestsTotal.WithLabelValues(req.Model, priorityLabel, status).Inc()
+	}()
+
 	for {
 		select {
 		case resp, ok := <-req.ResponseCh:
 			if !ok {
 				return // Channel closed (success)
 			}
+
+			// Track time to first token
+			if !firstTokenReceived {
+				firstTokenReceived = true
+				metrics.InferenceTimeToFirstToken.WithLabelValues(req.Model).Observe(time.Since(req.SubmitTime).Seconds())
+			}
+
+			// Track tokens (using cumulative count from worker)
+			if resp.TokenCount > lastTokenCount {
+				metrics.InferenceTokensTotal.WithLabelValues(req.Model).Add(float64(resp.TokenCount - lastTokenCount))
+				lastTokenCount = resp.TokenCount
+			}
+
 			// SSE Format: data: <token>\n\n
-			// We send JSON to be cleaner
 			data, _ := json.Marshal(resp)
 			fmt.Fprintf(w, "data: %s\n\n", data)
 			flusher.Flush()
@@ -97,12 +132,12 @@ func (h *InferenceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 
 		case err := <-req.ErrorCh:
-			// If headers sent, we can only write to stream
+			status = "error"
 			fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
 			return
 
 		case <-r.Context().Done():
-			// Client disconnected
+			status = "cancelled"
 			return
 		}
 	}

@@ -1,0 +1,326 @@
+{
+  "id": null,
+  "uid": "inference-metrics",
+  "title": "Inference Gateway Metrics",
+  "tags": ["inference", "llm", "gateway"],
+  "timezone": "browser",
+  "schemaVersion": 16,
+  "version": 0,
+  "refresh": "5s",
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Inference Request Rate",
+      "type": "timeseries",
+      "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "sum(rate(inference_requests_total[1m])) by (model, status)",
+          "legendFormat": "{{model}} - {{status}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Total Requests",
+      "type": "stat",
+      "gridPos": {"x": 12, "y": 0, "w": 4, "h": 4},
+      "targets": [
+        {
+          "expr": "sum(inference_requests_total)",
+          "legendFormat": "Total"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "steps": [{"color": "green", "value": null}]
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Success Rate",
+      "type": "gauge",
+      "gridPos": {"x": 16, "y": 0, "w": 4, "h": 4},
+      "targets": [
+        {
+          "expr": "sum(rate(inference_requests_total{status=\"success\"}[5m])) / sum(rate(inference_requests_total[5m])) * 100",
+          "legendFormat": "Success %"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "yellow", "value": 90},
+              {"color": "green", "value": 99}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Tokens Generated",
+      "type": "stat",
+      "gridPos": {"x": 20, "y": 0, "w": 4, "h": 4},
+      "targets": [
+        {
+          "expr": "sum(inference_tokens_total)",
+          "legendFormat": "Total Tokens"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Request Rate by Priority",
+      "type": "timeseries",
+      "gridPos": {"x": 12, "y": 4, "w": 12, "h": 4},
+      "targets": [
+        {
+          "expr": "sum(rate(inference_requests_total[1m])) by (priority)",
+          "legendFormat": "{{priority}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "title": "Time to First Token (p50, p95, p99)",
+      "type": "timeseries",
+      "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(inference_time_to_first_token_seconds_bucket[5m])) by (le, model))",
+          "legendFormat": "{{model}} p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(inference_time_to_first_token_seconds_bucket[5m])) by (le, model))",
+          "legendFormat": "{{model}} p95"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(inference_time_to_first_token_seconds_bucket[5m])) by (le, model))",
+          "legendFormat": "{{model}} p99"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      }
+    },
+    {
+      "id": 7,
+      "title": "End-to-End Request Duration (p50, p95, p99)",
+      "type": "timeseries",
+      "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(inference_request_duration_seconds_bucket[5m])) by (le, model))",
+          "legendFormat": "{{model}} p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(inference_request_duration_seconds_bucket[5m])) by (le, model))",
+          "legendFormat": "{{model}} p95"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(inference_request_duration_seconds_bucket[5m])) by (le, model))",
+          "legendFormat": "{{model}} p99"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      }
+    },
+    {
+      "id": 8,
+      "title": "Queue Wait Time (p50, p95, p99)",
+      "type": "timeseries",
+      "gridPos": {"x": 0, "y": 16, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(inference_queue_wait_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(inference_queue_wait_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p95"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(inference_queue_wait_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p99"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "title": "Worker Processing Time",
+      "type": "timeseries",
+      "gridPos": {"x": 12, "y": 16, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(inference_processing_seconds_bucket[5m])) by (le, worker_id))",
+          "legendFormat": "{{worker_id}} p95"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      }
+    },
+    {
+      "id": 10,
+      "title": "Worker Request Rate",
+      "type": "timeseries",
+      "gridPos": {"x": 0, "y": 24, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "sum(rate(inference_worker_requests_total[1m])) by (worker_id, status)",
+          "legendFormat": "{{worker_id}} - {{status}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        }
+      }
+    },
+    {
+      "id": 11,
+      "title": "Token Generation Rate",
+      "type": "timeseries",
+      "gridPos": {"x": 12, "y": 24, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "sum(rate(inference_tokens_total[1m])) by (model)",
+          "legendFormat": "{{model}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "axisLabel": "tokens/sec"
+          }
+        }
+      }
+    },
+    {
+      "id": 12,
+      "title": "Queue Wait by Priority",
+      "type": "timeseries",
+      "gridPos": {"x": 0, "y": 32, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(inference_queue_wait_seconds_bucket[5m])) by (le, priority))",
+          "legendFormat": "{{priority}} p95"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      }
+    },
+    {
+      "id": 13,
+      "title": "Errors by Worker",
+      "type": "timeseries",
+      "gridPos": {"x": 12, "y": 32, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "sum(rate(inference_worker_requests_total{status=\"error\"}[1m])) by (worker_id)",
+          "legendFormat": "{{worker_id}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "color": {"mode": "palette-classic"}
+        }
+      }
+    },
+    {
+      "id": 14,
+      "title": "Queue Depth",
+      "type": "timeseries",
+      "gridPos": {"x": 0, "y": 40, "w": 8, "h": 8},
+      "targets": [
+        {
+          "expr": "inference_queue_depth",
+          "legendFormat": "Queue Depth"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {"fixedColor": "orange", "mode": "fixed"}
+        }
+      }
+    },
+    {
+      "id": 15,
+      "title": "In-Flight Requests",
+      "type": "timeseries",
+      "gridPos": {"x": 8, "y": 40, "w": 8, "h": 8},
+      "targets": [
+        {
+          "expr": "inference_in_flight",
+          "legendFormat": "In-Flight"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {"fixedColor": "blue", "mode": "fixed"}
+        }
+      }
+    },
+    {
+      "id": 16,
+      "title": "Rate Limited Requests",
+      "type": "timeseries",
+      "gridPos": {"x": 16, "y": 40, "w": 8, "h": 8},
+      "targets": [
+        {
+          "expr": "sum(rate(rate_limited_requests_total[1m])) by (endpoint)",
+          "legendFormat": "{{endpoint}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "color": {"fixedColor": "red", "mode": "fixed"}
+        }
+      }
+    }
+  ]
+}

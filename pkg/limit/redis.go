@@ -4,7 +4,7 @@ import (
 	"context"
 	"embed"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -65,11 +65,11 @@ func NewRedisRateLimiter(addr string, ratePerMinute int, burst int) (*RedisRateL
 
 	// Preload script and cache SHA (optimization)
 	if err := r.preloadScript(); err != nil {
-		log.Printf("Warning: Could not preload script: %v", err)
+		slog.Warn("could not preload script", "error", err)
 		// Continue anyway - will fallback to EVAL
 	}
 
-	log.Printf("Redis leaky bucket initialized: capacity=%d, leak_rate=%.2f/sec", burst, r.leakRate)
+	slog.Info("redis leaky bucket initialized", "capacity", burst, "leak_rate", r.leakRate)
 	return r, nil
 }
 
@@ -79,7 +79,7 @@ func (r *RedisRateLimiter) preloadScript() error {
 		return fmt.Errorf("failed to load script: %w", err)
 	}
 	r.scriptSHA = sha
-	log.Printf("Redis rate limiter script loaded with SHA: %s", sha)
+	slog.Debug("redis script loaded", "sha", sha)
 	return nil
 }
 
@@ -98,7 +98,7 @@ func (r *RedisRateLimiter) Allow(ip string) bool {
 
 		// NOSCRIPT error? Reload and retry once
 		if isNoScriptErr(err) {
-			log.Printf("Script not cached, reloading...")
+			slog.Debug("script not cached, reloading")
 			r.preloadScript()
 
 			result, err := r.evalSHA(key, args)
@@ -114,7 +114,7 @@ func (r *RedisRateLimiter) Allow(ip string) bool {
 	// Fallback: Use EVAL (sends full script)
 	result, err := r.eval(key, args)
 	if err != nil {
-		log.Printf("Redis error: %v", err)
+		slog.Error("redis error", "error", err)
 		return true // Fail open
 	}
 

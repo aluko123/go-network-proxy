@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0finference.proto\x12\tinference\"\x7f\n\x0fGenerateRequest\x12\x12\n\nrequest_id\x18\x01 \x01(\t\x12\r\n\x05model\x18\x02 \x01(\t\x12\x0e\n\x06prompt\x18\x03 \x01(\t\x12\x13\n\x0btemperature\x18\x04 \x01(\x02\x12\x12\n\nmax_tokens\x18\x05 \x01(\x05\x12\x10\n\x08priority\x18\x06 \x01(\x05\"S\n\rTokenResponse\x12\x12\n\nrequest_id\x18\x01 \x01(\t\x12\r\n\x05token\x18\x02 \x01(\t\x12\x10\n\x08\x66inished\x18\x03 \x01(\x08\x12\r\n\x05\x65rror\x18\x04 \x01(\t\"\x0f\n\rHealthRequest\"V\n\x0eHealthResponse\x12\x0f\n\x07healthy\x18\x01 \x01(\x08\x12\x1a\n\x12\x63urrent_queue_size\x18\x02 \x01(\x05\x12\x17\n\x0fgpu_utilization\x18\x03 \x01(\x02\x32\x91\x01\n\x0cModelService\x12\x42\n\x08Generate\x12\x1a.inference.GenerateRequest\x1a\x18.inference.TokenResponse0\x01\x12=\n\x06Health\x12\x18.inference.HealthRequest\x1a\x19.inference.HealthResponseB3Z1github.com/aluko123/go-network-proxy/inference/pbb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0finference.proto\x12\tinference\"\x7f\n\x0fGenerateRequest\x12\x12\n\nrequest_id\x18\x01 \x01(\t\x12\r\n\x05model\x18\x02 \x01(\t\x12\x0e\n\x06prompt\x18\x03 \x01(\t\x12\x13\n\x0btemperature\x18\x04 \x01(\x02\x12\x12\n\nmax_tokens\x18\x05 \x01(\x05\x12\x10\n\x08priority\x18\x06 \x01(\x05\"h\n\rTokenResponse\x12\x12\n\nrequest_id\x18\x01 \x01(\t\x12\r\n\x05token\x18\x02 \x01(\t\x12\x10\n\x08\x66inished\x18\x03 \x01(\x08\x12\r\n\x05\x65rror\x18\x04 \x01(\t\x12\x13\n\x0btoken_count\x18\x05 \x01(\x05\"\x0f\n\rHealthRequest\"V\n\x0eHealthResponse\x12\x0f\n\x07healthy\x18\x01 \x01(\x08\x12\x1a\n\x12\x63urrent_queue_size\x18\x02 \x01(\x05\x12\x17\n\x0fgpu_utilization\x18\x03 \x01(\x02\x32\x91\x01\n\x0cModelService\x12\x42\n\x08Generate\x12\x1a.inference.GenerateRequest\x1a\x18.inference.TokenResponse0\x01\x12=\n\x06Health\x12\x18.inference.HealthRequest\x1a\x19.inference.HealthResponseB3Z1github.com/aluko123/go-network-proxy/inference/pbb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -35,11 +35,11 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_GENERATEREQUEST']._serialized_start=30
   _globals['_GENERATEREQUEST']._serialized_end=157
   _globals['_TOKENRESPONSE']._serialized_start=159
-  _globals['_TOKENRESPONSE']._serialized_end=242
-  _globals['_HEALTHREQUEST']._serialized_start=244
-  _globals['_HEALTHREQUEST']._serialized_end=259
-  _globals['_HEALTHRESPONSE']._serialized_start=261
-  _globals['_HEALTHRESPONSE']._serialized_end=347
-  _globals['_MODELSERVICE']._serialized_start=350
-  _globals['_MODELSERVICE']._serialized_end=495
+  _globals['_TOKENRESPONSE']._serialized_end=263
+  _globals['_HEALTHREQUEST']._serialized_start=265
+  _globals['_HEALTHREQUEST']._serialized_end=280
+  _globals['_HEALTHRESPONSE']._serialized_start=282
+  _globals['_HEALTHRESPONSE']._serialized_end=368
+  _globals['_MODELSERVICE']._serialized_start=371
+  _globals['_MODELSERVICE']._serialized_end=516
 # @@protoc_insertion_point(module_scope)

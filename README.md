@@ -33,6 +33,30 @@ go run cmd/gateway/main.go
 go run cmd/gateway/main.go -worker-addrs "localhost:50051,localhost:50052"
 ```
 
+## Architecture
+
+```
+┌─────────────┐     ┌─────────────────────────────────────────────────┐
+│   Client    │     │                  Go Gateway                     │
+│  (HTTP)     │────▶│  ┌──────────┐   ┌──────────┐   ┌─────────────┐  │
+└─────────────┘     │  │ Rate     │──▶│ Priority │──▶│   Router    │  │
+                    │  │ Limiter  │   │  Queue   │   │             │  │
+┌─────────────┐     │  └──────────┘   └──────────┘   └──────┬──────┘  │
+│   Client    │────▶│                                       │         │
+│  (SSE)      │◀────│───────────────────────────────────────┘         │
+└─────────────┘     └─────────────────────────────────────────────────┘
+                                                            │
+                              ┌──────────────────────────────┼──────────────────────────────┐
+                              ▼                              ▼                              ▼
+                    ┌──────────────────┐          ┌──────────────────┐          ┌──────────────────┐
+                    │  Python Worker   │          │  Python Worker   │          │  Python Worker   │
+                    │  (gRPC Stream)   │          │  (gRPC Stream)   │          │  (gRPC Stream)   │
+                    │  :50051          │          │  :50052          │          │  :50053          │
+                    └──────────────────┘          └──────────────────┘          └──────────────────┘
+```
+
+**Flow:** HTTP request → Blocklist for IPs → Rate limit check → Priority queue (high priority first) → Router dispatches to available worker → gRPC streaming → SSE response to client
+
 ## Configuration
 
 | Flag | Default | Description |
@@ -40,9 +64,14 @@ go run cmd/gateway/main.go -worker-addrs "localhost:50051,localhost:50052"
 | `-proto` | http | Protocol: http or https |
 | `-limiter` | redis | Rate limiter: memory or redis |
 | `-redis-addr` | localhost:6379 | Redis address |
-| `-rate-limit` | 100 | Requests per minute |
+| `-rate-limit` | 100 | Requests per minute per IP |
 | `-rate-burst` | 20 | Burst size |
 | `-worker-addrs` | "" | Comma-separated worker addresses |
+| `-read-timeout` | 30s | HTTP read timeout |
+| `-write-timeout` | 60s | HTTP write timeout |
+| `-idle-timeout` | 120s | HTTP idle timeout |
+| `-inference-timeout` | 5m | Max inference request duration |
+| `-shutdown-timeout` | 30s | Graceful shutdown timeout |
 
 ## Project Structure
 

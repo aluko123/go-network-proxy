@@ -38,6 +38,7 @@ class MockModelService(inference_pb2_grpc.ModelServiceServicer):
             yield inference_pb2.TokenResponse(
                 request_id=request_id,
                 token=token + " ",
+                token_count=i + 1,
                 finished=False
             )
 
@@ -45,6 +46,7 @@ class MockModelService(inference_pb2_grpc.ModelServiceServicer):
         yield inference_pb2.TokenResponse(
             request_id=request_id,
             token="",
+            token_count=len(mock_tokens),
             finished=True
         )
         logger.info(f"[{self.model_name}] Finished request {request_id}")

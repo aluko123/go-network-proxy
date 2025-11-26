@@ -1,0 +1,88 @@
+{
+  "id": null,
+  "uid": "proxy-metrics",
+  "title": "Network Proxy Metrics",
+  "tags": ["proxy", "network"],
+  "timezone": "browser",
+  "schemaVersion": 16,
+  "version": 0,
+  "refresh": "5s",
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Request Rate",
+      "type": "graph",
+      "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "rate(proxy_requests_total[5m])",
+          "legendFormat": "{{method}} - {{status}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Total Blocked Requests",
+      "type": "stat",
+      "gridPos": {"x": 12, "y": 0, "w": 6, "h": 4},
+      "targets": [
+        {
+          "expr": "proxy_blocked_requests_total",
+          "legendFormat": "Blocked"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Active Connections",
+      "type": "stat",
+      "gridPos": {"x": 18, "y": 0, "w": 6, "h": 4},
+      "targets": [
+        {
+          "expr": "proxy_active_connections",
+          "legendFormat": "Active"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Request Duration (95th Percentile)",
+      "type": "graph",
+      "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, rate(proxy_request_duration_seconds_bucket[5m]))",
+          "legendFormat": "{{method}} p95"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Requests by Method",
+      "type": "piechart",
+      "gridPos": {"x": 12, "y": 4, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "sum by (method) (proxy_requests_total)",
+          "legendFormat": "{{method}}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Average Request Duration",
+      "type": "stat",
+      "gridPos": {"x": 12, "y": 12, "w": 12, "h": 4},
+      "targets": [
+        {
+          "expr": "rate(proxy_request_duration_seconds_sum[5m]) / rate(proxy_request_duration_seconds_count[5m])",
+          "legendFormat": "Avg Duration"
+        }
+      ]
+    }
+  ]
+}

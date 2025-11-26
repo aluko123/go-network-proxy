@@ -111,6 +111,7 @@ type TokenResponse struct {
 	Token         string                 `protobuf:"bytes,2,opt,name=token,proto3" json:"token,omitempty"`
 	Finished      bool                   `protobuf:"varint,3,opt,name=finished,proto3" json:"finished,omitempty"`
 	Error         string                 `protobuf:"bytes,4,opt,name=error,proto3" json:"error,omitempty"`
+	TokenCount    int32                  `protobuf:"varint,5,opt,name=token_count,json=tokenCount,proto3" json:"token_count,omitempty"` // Cumulative tokens generated so far
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -171,6 +172,13 @@ func (x *TokenResponse) GetError() string {
 		return x.Error
 	}
 	return ""
+}
+
+func (x *TokenResponse) GetTokenCount() int32 {
+	if x != nil {
+		return x.TokenCount
+	}
+	return 0
 }
 
 type HealthRequest struct {
@@ -282,13 +290,15 @@ const file_inference_proto_rawDesc = "" +
 	"\vtemperature\x18\x04 \x01(\x02R\vtemperature\x12\x1d\n" +
 	"\n" +
 	"max_tokens\x18\x05 \x01(\x05R\tmaxTokens\x12\x1a\n" +
-	"\bpriority\x18\x06 \x01(\x05R\bpriority\"v\n" +
+	"\bpriority\x18\x06 \x01(\x05R\bpriority\"\x97\x01\n" +
 	"\rTokenResponse\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x14\n" +
 	"\x05token\x18\x02 \x01(\tR\x05token\x12\x1a\n" +
 	"\bfinished\x18\x03 \x01(\bR\bfinished\x12\x14\n" +
-	"\x05error\x18\x04 \x01(\tR\x05error\"\x0f\n" +
+	"\x05error\x18\x04 \x01(\tR\x05error\x12\x1f\n" +
+	"\vtoken_count\x18\x05 \x01(\x05R\n" +
+	"tokenCount\"\x0f\n" +
 	"\rHealthRequest\"\x81\x01\n" +
 	"\x0eHealthResponse\x12\x18\n" +
 	"\ahealthy\x18\x01 \x01(\bR\ahealthy\x12,\n" +

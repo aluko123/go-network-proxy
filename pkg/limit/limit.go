@@ -1,7 +1,7 @@
 package limit
 
 import (
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"sync"
@@ -74,7 +74,7 @@ func (m *MemoryRateLimiter) cleanup() {
 	defer m.mu.Unlock()
 
 	m.limiters = make(map[string]*rate.Limiter)
-	log.Println("Cleaned up stale rate limiters")
+	slog.Debug("cleaned up stale rate limiters")
 }
 
 func (m *MemoryRateLimiter) Close() error {

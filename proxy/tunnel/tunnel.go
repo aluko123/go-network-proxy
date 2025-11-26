@@ -1,18 +1,35 @@
 package tunnel
 
 import (
-	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"sync"
 	"time"
 )
 
+// Config holds tunnel configuration
+type Config struct {
+	DialTimeout time.Duration
+}
+
+// DefaultConfig returns the default tunnel configuration
+func DefaultConfig() Config {
+	return Config{
+		DialTimeout: 10 * time.Second,
+	}
+}
+
+var config = DefaultConfig()
+
+// SetConfig updates the tunnel configuration
+func SetConfig(c Config) {
+	config = c
+}
+
 // HandleTunneling handles HTTPS CONNECT requests for tunneling
 func HandleTunneling(w http.ResponseWriter, r *http.Request) {
-	destConn, err := net.DialTimeout("tcp", r.Host, 10*time.Second)
+	destConn, err := net.DialTimeout("tcp", r.Host, config.DialTimeout)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
@@ -32,26 +49,16 @@ func HandleTunneling(w http.ResponseWriter, r *http.Request) {
 	}
 	defer srcConn.Close()
 
-	srcConnStr := fmt.Sprintf("%s->%s", srcConn.LocalAddr().String(), srcConn.RemoteAddr().String())
-	destConnStr := fmt.Sprintf("%s->%s", destConn.LocalAddr().String(), destConn.RemoteAddr().String())
-
-	log.Printf("%s - %s - %s\n", r.Proto, r.Method, r.Host)
-	log.Printf("srcConn: %s - destConn: %s\n", srcConnStr, destConnStr)
-
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	go transfer(&wg, destConn, srcConn, destConnStr, srcConnStr)
-	go transfer(&wg, srcConn, destConn, srcConnStr, destConnStr)
+	go transfer(&wg, destConn, srcConn)
+	go transfer(&wg, srcConn, destConn)
 	wg.Wait()
 }
 
 // transfer copies data between connections bidirectionally
-func transfer(wg *sync.WaitGroup, destination io.Writer, source io.Reader, destName, srcName string) {
+func transfer(wg *sync.WaitGroup, destination io.Writer, source io.Reader) {
 	defer wg.Done()
-	written, err := io.Copy(destination, source)
-	if err != nil {
-		fmt.Printf("Error transferring data from %s to %s: %v\n", srcName, destName, err)
-	}
-	fmt.Printf("Transferred %d bytes from %s to %s\n", written, srcName, destName)
+	io.Copy(destination, source)
 }

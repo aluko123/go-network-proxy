@@ -24,6 +24,7 @@ message TokenResponse {
   string token = 2;
   bool finished = 3;
   string error = 4;
+  int32 token_count = 5;  // Cumulative tokens generated so far
 }
 
 message HealthRequest {}
