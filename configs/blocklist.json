@@ -1,0 +1,13 @@
+{
+  "blocked_domains": [
+    "example.com",
+    "malware.com",
+    "tracking-site.com",
+    "*.doubleclick.net",
+    "*.ads.google.com",
+    "*.facebook.com",
+    "badsite.org",
+    "phishing-test.com",
+    "*.tracker.io"
+  ]
+}

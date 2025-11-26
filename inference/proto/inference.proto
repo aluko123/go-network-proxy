@@ -1,0 +1,35 @@
+syntax = "proto3";
+package inference;
+
+option go_package = "github.com/aluko123/go-network-proxy/inference/pb";
+
+service ModelService {
+  // Stream tokens back to the gateway
+  rpc Generate (GenerateRequest) returns (stream TokenResponse);
+  // Check worker health and load
+  rpc Health (HealthRequest) returns (HealthResponse);
+}
+
+message GenerateRequest {
+  string request_id = 1;
+  string model = 2;
+  string prompt = 3;
+  float temperature = 4;
+  int32 max_tokens = 5;
+  int32 priority = 6; // 0=Low, 1=High (For Priority Queue)
+}
+
+message TokenResponse {
+  string request_id = 1;
+  string token = 2;
+  bool finished = 3;
+  string error = 4;
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  bool healthy = 1;
+  int32 current_queue_size = 2;
+  float gpu_utilization = 3; // Useful for load balancing!
+}
