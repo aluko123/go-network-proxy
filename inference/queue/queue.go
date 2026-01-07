@@ -5,7 +5,6 @@ import (
 	"sync"
 	"time"
 
-	pb "github.com/aluko123/go-network-proxy/inference/pb"
 	"github.com/aluko123/go-network-proxy/pkg/metrics"
 )
 
@@ -20,8 +19,8 @@ type Request struct {
 	SubmitTime  time.Time
 	StartTime   time.Time // When worker began processing
 
-	// Channels for response handling
-	ResponseCh chan *pb.TokenResponse
+	// Channels for response handling (uses any to support multiple backend types)
+	ResponseCh chan any
 	ErrorCh    chan error
 
 	// Internal heap index

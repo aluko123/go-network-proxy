@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	pb "github.com/aluko123/go-network-proxy/inference/pb"
+	"github.com/aluko123/go-network-proxy/inference/backend"
 	"github.com/aluko123/go-network-proxy/inference/queue"
 	"github.com/aluko123/go-network-proxy/pkg/logger"
 	"github.com/aluko123/go-network-proxy/pkg/metrics"
@@ -23,13 +23,12 @@ func NewInferenceHandler(pq *queue.PriorityQueue) *InferenceHandler {
 }
 
 func (h *InferenceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// 1. Parse request
 	var reqBody struct {
 		Prompt      string  `json:"prompt"`
 		MaxTokens   int     `json:"max_tokens"`
 		Temperature float32 `json:"temperature"`
 		Model       string  `json:"model"`
-		Priority    int     `json:"priority"` // Optional: Let users set priority (or derive from API key)
+		Priority    int     `json:"priority"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
@@ -37,7 +36,6 @@ func (h *InferenceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Apply Defaults
 	if reqBody.Temperature <= 0 {
 		reqBody.Temperature = 0.7
 	}
@@ -45,10 +43,10 @@ func (h *InferenceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		reqBody.MaxTokens = 100
 	}
 	if reqBody.Model == "" {
-		reqBody.Model = "default-model"
+		reqBody.Model = "default"
 	}
 	if reqBody.Priority <= 0 {
-		reqBody.Priority = 1 // Default low priority
+		reqBody.Priority = 1
 	}
 	if reqBody.Prompt == "" {
 		http.Error(w, "Prompt is required", http.StatusBadRequest)
@@ -60,7 +58,6 @@ func (h *InferenceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		reqID = fmt.Sprintf("req-%d", time.Now().UnixNano())
 	}
 
-	// 2. Create Internal Request
 	req := &queue.Request{
 		ID:          reqID,
 		Prompt:      reqBody.Prompt,
@@ -69,17 +66,15 @@ func (h *InferenceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Model:       reqBody.Model,
 		Priority:    reqBody.Priority,
 		SubmitTime:  time.Now(),
-		ResponseCh:  make(chan *pb.TokenResponse, 100), // Buffered to avoid blocking worker
+		ResponseCh:  make(chan any, 100),
 		ErrorCh:     make(chan error, 1),
 	}
 
-	// 3. Enqueue (This is non-blocking usually, but we can measure queue time here)
 	if !h.queue.Push(req) {
 		http.Error(w, "Service shutting down", http.StatusServiceUnavailable)
 		return
 	}
 
-	// 4. Stream Response
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -90,16 +85,13 @@ func (h *InferenceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Metrics tracking
 	priorityLabel := metrics.PriorityLabel(req.Priority)
 	var firstTokenReceived bool
-	var lastTokenCount int32
+	var lastTokenCount int
 	status := "success"
 
 	defer func() {
-		// Record end-to-end duration
 		metrics.InferenceRequestDuration.WithLabelValues(req.Model).Observe(time.Since(req.SubmitTime).Seconds())
-		// Record request count with final status
 		metrics.InferenceRequestsTotal.WithLabelValues(req.Model, priorityLabel, status).Inc()
 	}()
 
@@ -107,33 +99,42 @@ func (h *InferenceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		select {
 		case resp, ok := <-req.ResponseCh:
 			if !ok {
-				return // Channel closed (success)
+				return
 			}
 
-			// Track time to first token
-			if !firstTokenReceived {
+			token, isToken := resp.(backend.Token)
+			if !isToken {
+				continue
+			}
+
+			if !firstTokenReceived && token.Text != "" {
 				firstTokenReceived = true
 				metrics.InferenceTimeToFirstToken.WithLabelValues(req.Model).Observe(time.Since(req.SubmitTime).Seconds())
 			}
 
-			// Track tokens (using cumulative count from worker)
-			if resp.TokenCount > lastTokenCount {
-				metrics.InferenceTokensTotal.WithLabelValues(req.Model).Add(float64(resp.TokenCount - lastTokenCount))
-				lastTokenCount = resp.TokenCount
+			if token.TokenCount > lastTokenCount {
+				metrics.InferenceTokensTotal.WithLabelValues(req.Model).Add(float64(token.TokenCount - lastTokenCount))
+				lastTokenCount = token.TokenCount
 			}
 
-			// SSE Format: data: <token>\n\n
-			data, _ := json.Marshal(resp)
+			sseData := map[string]any{
+				"request_id":  token.RequestID,
+				"token":       token.Text,
+				"token_count": token.TokenCount,
+				"finished":    token.Finished,
+			}
+			data, _ := json.Marshal(sseData)
 			fmt.Fprintf(w, "data: %s\n\n", data)
 			flusher.Flush()
 
-			if resp.Finished {
+			if token.Finished {
 				return
 			}
 
 		case err := <-req.ErrorCh:
 			status = "error"
 			fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
+			flusher.Flush()
 			return
 
 		case <-r.Context().Done():

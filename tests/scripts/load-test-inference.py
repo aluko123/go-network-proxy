@@ -64,6 +64,7 @@ SAMPLE_PROMPTS = [
 
 MODELS = ["gpt-small", "gpt-large", "default"]
 PRIORITIES = [1, 2, 3, 5, 7, 10]
+API_KEY = "sk-dev-test-key-12345"
 
 
 async def send_request(
@@ -90,9 +91,11 @@ async def send_request(
     tokens_received = 0
     
     try:
+        headers = {"Authorization": f"Bearer {API_KEY}"}
         async with session.post(
             f"{gateway_url}/v1/inference",
             json=payload,
+            headers=headers,
             timeout=aiohttp.ClientTimeout(total=120)
         ) as resp:
             if resp.status == 429:
@@ -282,9 +285,11 @@ async def run_rate_limit_test(gateway_url: str, burst_size: int = 50) -> None:
                 "max_tokens": 10,
                 "model": "default",
             }
+            headers = {"Authorization": f"Bearer {API_KEY}"}
             tasks.append(session.post(
                 f"{gateway_url}/v1/inference",
                 json=payload,
+                headers=headers,
                 timeout=aiohttp.ClientTimeout(total=30)
             ))
         

@@ -1,0 +1,39 @@
+# Backend Configuration
+# API keys are loaded from environment variables for security
+
+default: local-gpu
+
+backends:
+  # OpenAI GPT models
+  - name: openai
+    type: openai
+    api_key_env: OPENAI_API_KEY
+    models:
+      - gpt-4
+      - gpt-4-turbo
+      - gpt-4o
+      - gpt-4o-mini
+      - gpt-3.5-turbo
+
+  # Anthropic Claude models
+  - name: anthropic
+    type: anthropic
+    api_key_env: ANTHROPIC_API_KEY
+    models:
+      - claude-3-opus-20240229
+      - claude-3-sonnet-20240229
+      - claude-3-haiku-20240307
+      - claude-3-5-sonnet-20241022
+
+  # Local GPU workers (gRPC)
+  - name: local-gpu
+    type: grpc
+    addresses:
+      - localhost:50051
+      - localhost:50052
+    models:
+      - llama-70b
+      - llama-7b
+      - mistral-7b
+      - mock-gpt
+      - default

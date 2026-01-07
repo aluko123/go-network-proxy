@@ -1,0 +1,6 @@
+{
+  "keys": [
+    {"name": "example-key", "key": "sk-your-api-key-here"},
+    {"name": "another-key", "key": "sk-another-key-here"}
+  ]
+}

@@ -7,13 +7,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
+	"github.com/aluko123/go-network-proxy/inference/backend"
 	"github.com/aluko123/go-network-proxy/inference/queue"
 	"github.com/aluko123/go-network-proxy/inference/router"
-	"github.com/aluko123/go-network-proxy/inference/worker"
+	"github.com/aluko123/go-network-proxy/pkg/auth"
 	"github.com/aluko123/go-network-proxy/pkg/blocklist"
 	"github.com/aluko123/go-network-proxy/pkg/limit"
 	"github.com/aluko123/go-network-proxy/pkg/logger"
@@ -25,57 +25,49 @@ import (
 )
 
 func main() {
-	// --- 1. Configuration Flags ---
 	var (
-		pemPath     string
-		keyPath     string
-		proto       string
-		debug       bool
-		limiterType string
-		redisAddr   string
-		rateLimit   int
-		rateBurst   int
-		workerAddrs string
-		logFormat   string
+		pemPath      string
+		keyPath      string
+		proto        string
+		limiterType  string
+		redisAddr    string
+		rateLimit    int
+		rateBurst    int
+		backendsFile string
+		logFormat    string
+		routerWorkers int
 
-		// Timeout configuration
 		readTimeout      time.Duration
 		writeTimeout     time.Duration
 		idleTimeout      time.Duration
 		dialTimeout      time.Duration
-		inferenceTimeout time.Duration
 		shutdownTimeout  time.Duration
 	)
 
 	flag.StringVar(&pemPath, "pem", "server.pem", "path to pem file")
 	flag.StringVar(&keyPath, "key", "server.key", "path to key file")
 	flag.StringVar(&proto, "proto", "http", "protocol to use: http or https")
-	flag.BoolVar(&debug, "debug", false, "enable debug logging")
 
 	flag.StringVar(&limiterType, "limiter", "redis", "Rate limiter type: memory or redis")
 	flag.StringVar(&redisAddr, "redis-addr", "localhost:6379", "Redis server address")
 	flag.IntVar(&rateLimit, "rate-limit", 100, "Requests per minute per IP")
 	flag.IntVar(&rateBurst, "rate-burst", 20, "Burst size for rate limiter")
 
-	flag.StringVar(&workerAddrs, "worker-addrs", "", "Comma-separated list of inference worker addresses")
+	flag.StringVar(&backendsFile, "backends", "configs/backends.yaml", "Path to backends config file")
+	flag.IntVar(&routerWorkers, "router-workers", 10, "Number of router worker goroutines")
 
 	flag.StringVar(&logFormat, "log-format", "json", "Log format: json or text")
 
-	// Timeout flags
 	flag.DurationVar(&readTimeout, "read-timeout", 30*time.Second, "HTTP read timeout")
 	flag.DurationVar(&writeTimeout, "write-timeout", 60*time.Second, "HTTP write timeout")
 	flag.DurationVar(&idleTimeout, "idle-timeout", 120*time.Second, "HTTP idle timeout")
 	flag.DurationVar(&dialTimeout, "dial-timeout", 10*time.Second, "Upstream connection dial timeout")
-	flag.DurationVar(&inferenceTimeout, "inference-timeout", 5*time.Minute, "Max inference request duration")
 	flag.DurationVar(&shutdownTimeout, "shutdown-timeout", 30*time.Second, "Graceful shutdown timeout")
 
 	flag.Parse()
 
-	// --- 2. Initialize Infrastructure ---
-
 	log := logger.New(logFormat)
 
-	// Configure timeouts for handlers
 	tunnel.SetConfig(tunnel.Config{
 		DialTimeout: dialTimeout,
 	})
@@ -83,18 +75,12 @@ func main() {
 		DialTimeout:     dialTimeout,
 		IdleConnTimeout: idleTimeout,
 	})
-	worker.SetConfig(worker.Config{
-		InferenceTimeout: inferenceTimeout,
-	})
 
-	// Blocklist
 	bm := blocklist.NewManager()
-	// Note: Adjusted path to config/blocklist.json
 	if err := bm.LoadFromFile("configs/blocklist.json"); err != nil {
 		log.Warn("could not load blocklist", "error", err)
 	}
 
-	// Rate Limiter
 	var rateLimiter limit.RateLimiter
 	var err error
 
@@ -117,41 +103,69 @@ func main() {
 	}
 	defer rateLimiter.Close()
 
-	// --- 3. Inference Engine Initialization ---
+	// --- Inference Engine with Backend Registry ---
 	var inferenceHandler *handlers.InferenceHandler
+	var routerInstance *router.Router
 
-	if workerAddrs != "" {
-		// 1. Create Priority Queue
-		pq := queue.NewPriorityQueue()
-
-		// 2. Create and Start Router (Manages Workers)
-		addrs := strings.Split(workerAddrs, ",")
-		routerInstance, err := router.NewRouter(addrs, pq)
-		if err != nil {
-			log.Error("failed to initialize inference router", "error", err)
-			os.Exit(1)
+	registry, err := backend.LoadRegistry(backendsFile)
+	if err != nil {
+		log.Warn("could not load backends config", "error", err, "file", backendsFile)
+		registry = backend.NewRegistry()
+	} else {
+		models := registry.ListModels()
+		backends := registry.ListBackends()
+		log.Info("loaded backends",
+			"backends", len(backends),
+			"models", len(models),
+		)
+		for _, b := range backends {
+			log.Info("backend registered",
+				"name", b.Name(),
+				"type", b.Type(),
+				"models", b.Models(),
+			)
 		}
-		routerInstance.Start()
-		defer routerInstance.Close()
-
-		// 3. Create HTTP Handler
-		inferenceHandler = handlers.NewInferenceHandler(pq)
-		log.Info("inference gateway initialized", "workers", len(addrs))
 	}
 
-	// --- 4. Setup Handlers & Routing ---
+	pq := queue.NewPriorityQueue()
+	routerInstance = router.NewRouter(registry, pq, routerWorkers)
+	routerInstance.Start()
+	defer routerInstance.Close()
 
+	inferenceHandler = handlers.NewInferenceHandler(pq)
+	log.Info("inference gateway initialized", "router_workers", routerWorkers)
+
+	// --- Setup Handlers & Routing ---
 	mux := http.NewServeMux()
 
-	// A. Observability
 	mux.Handle("/metrics", promhttp.Handler())
 
-	// B. Inference Endpoint
-	if inferenceHandler != nil {
-		mux.Handle("/v1/inference", inferenceHandler)
+	// Models endpoint - list available models
+	mux.HandleFunc("/v1/models", func(w http.ResponseWriter, r *http.Request) {
+		models := registry.ListModels()
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"models":[`))
+		for i, m := range models {
+			if i > 0 {
+				w.Write([]byte(","))
+			}
+			w.Write([]byte(`"` + m + `"`))
+		}
+		w.Write([]byte(`]}`))
+	})
+
+	// Inference endpoint with auth
+	keyStore := auth.NewKeyStore()
+	if err := keyStore.LoadFromFile("configs/apikeys.json"); err != nil {
+		log.Warn("could not load API keys", "error", err)
+	} else {
+		log.Info("loaded API keys", "count", keyStore.Count())
 	}
 
-	// C. Forward Proxy (Catch-all)
+	authedInference := middleware.WithAPIKeyAuth(keyStore)(inferenceHandler)
+	mux.Handle("/v1/inference", authedInference)
+
+	// Forward Proxy (Catch-all)
 	proxyHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodConnect {
 			tunnel.HandleTunneling(w, r)
@@ -160,18 +174,14 @@ func main() {
 		}
 	})
 
-	// Wrap Proxy with Blocklist
 	blockedProxy := middleware.WithBlocklist(bm)(proxyHandler)
-
 	mux.Handle("/", blockedProxy)
 
-	// --- 4. Apply Global Middleware ---
-	// Chain applies in reverse order: last listed runs first
 	finalHandler := middleware.Chain(
 		mux,
-		middleware.WithRateLimit(rateLimiter), // 3. Check rate limit
-		middleware.WithLogging(log),           // 2. Log request (needs request_id)
-		middleware.WithRequestID(),            // 1. Generate request ID first
+		middleware.WithRateLimit(rateLimiter),
+		middleware.WithLogging(log),
+		middleware.WithRequestID(),
 	)
 
 	server := &http.Server{
@@ -183,7 +193,6 @@ func main() {
 		TLSNextProto: make(map[string]func(*http.Server, *tls.Conn, http.Handler)),
 	}
 
-	// --- 5. Start Server ---
 	log.Info("starting server",
 		"addr", server.Addr,
 		"proto", proto,
@@ -193,7 +202,6 @@ func main() {
 		"shutdown_timeout", shutdownTimeout,
 	)
 
-	// Channel to receive server errors
 	serverErr := make(chan error, 1)
 
 	go func() {
@@ -204,7 +212,6 @@ func main() {
 		}
 	}()
 
-	// --- 6. Graceful Shutdown ---
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
@@ -218,13 +225,11 @@ func main() {
 		log.Info("shutdown signal received", "signal", sig.String())
 	}
 
-	// Create shutdown context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 
 	log.Info("shutting down server", "timeout", shutdownTimeout)
 
-	// Shutdown HTTP server (stops accepting new connections, waits for existing)
 	if err := server.Shutdown(ctx); err != nil {
 		log.Error("server shutdown error", "error", err)
 	}

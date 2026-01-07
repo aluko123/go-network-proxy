@@ -1,0 +1,39 @@
+# Local testing configuration
+# Uses mock API server for OpenAI/Anthropic endpoints
+
+default: local-gpu
+
+backends:
+  # Mock OpenAI (points to local mock server)
+  - name: openai-mock
+    type: openai
+    api_key: "mock-key-not-used"
+    base_url: "http://localhost:8000"
+    models:
+      - gpt-4
+      - gpt-4-turbo
+      - gpt-4o
+      - gpt-3.5-turbo
+
+  # Mock Anthropic (points to local mock server)
+  - name: anthropic-mock
+    type: anthropic
+    api_key: "mock-key-not-used"
+    base_url: "http://localhost:8000"
+    models:
+      - claude-3-opus-20240229
+      - claude-3-sonnet-20240229
+      - claude-3-haiku-20240307
+
+  # Local gRPC workers (your existing mock workers)
+  - name: local-gpu
+    type: grpc
+    addresses:
+      - localhost:50051
+      - localhost:50052
+    models:
+      - llama-70b
+      - llama-7b
+      - mistral-7b
+      - mock-gpt
+      - default

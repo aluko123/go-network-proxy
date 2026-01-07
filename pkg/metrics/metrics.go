@@ -143,6 +143,25 @@ var (
 		},
 		[]string{"endpoint"},
 	)
+
+	// --- Auth Metrics ---
+
+	// Counter: Successful authentications
+	AuthSuccessTotal = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "auth_success_total",
+			Help: "Total successful API key authentications",
+		},
+	)
+
+	// Counter: Failed authentications
+	AuthFailuresTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "auth_failures_total",
+			Help: "Total failed API key authentications",
+		},
+		[]string{"reason"},
+	)
 )
 
 // PriorityLabel converts numeric priority (1-10) to low/medium/high

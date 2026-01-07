@@ -1,74 +1,134 @@
 package router
 
 import (
-	"fmt"
+	"context"
 	"log/slog"
+	"time"
 
+	"github.com/aluko123/go-network-proxy/inference/backend"
 	"github.com/aluko123/go-network-proxy/inference/queue"
-	"github.com/aluko123/go-network-proxy/inference/worker"
+	"github.com/aluko123/go-network-proxy/pkg/metrics"
 )
 
-// Router manages the worker pool and request distribution
 type Router struct {
-	workers []*worker.Client
-	queue   *queue.PriorityQueue
+	registry *backend.Registry
+	queue    *queue.PriorityQueue
+	workers  int
 }
 
-// NewRouter creates a router with the given worker addresses
-func NewRouter(addresses []string, pq *queue.PriorityQueue) (*Router, error) {
-	r := &Router{
-		workers: make([]*worker.Client, 0, len(addresses)),
-		queue:   pq,
+func NewRouter(registry *backend.Registry, pq *queue.PriorityQueue, workers int) *Router {
+	if workers <= 0 {
+		workers = 10
 	}
-
-	for i, addr := range addresses {
-		id := fmt.Sprintf("worker-%d", i)
-		w, err := worker.NewClient(id, addr)
-		if err != nil {
-			return nil, fmt.Errorf("failed to connect to worker %s: %v", addr, err)
-		}
-		r.workers = append(r.workers, w)
-		slog.Info("connected to worker", "worker_id", id, "addr", addr)
+	return &Router{
+		registry: registry,
+		queue:    pq,
+		workers:  workers,
 	}
-
-	return r, nil
 }
 
-// Start begins the worker loops
 func (r *Router) Start() {
-	for _, w := range r.workers {
-		go r.workerLoop(w)
+	for i := 0; i < r.workers; i++ {
+		go r.workerLoop(i)
 	}
+	slog.Info("router started", "workers", r.workers)
 }
 
-// workerLoop constantly pulls from the queue and processes requests
-func (r *Router) workerLoop(w *worker.Client) {
-	slog.Info("starting processing loop", "worker_id", w.ID)
+func (r *Router) workerLoop(id int) {
+	slog.Info("starting router worker", "worker_id", id)
 	for {
-		// 1. Block until a request is available (nil if queue closed)
 		req := r.queue.Pop()
 		if req == nil {
-			slog.Info("worker stopping", "worker_id", w.ID)
+			slog.Info("router worker stopping", "worker_id", id)
 			return
 		}
 
-		// 2. Process it
-		w.ProcessRequest(req)
+		r.processRequest(req)
 		r.queue.Done()
 	}
 }
 
-// Close shuts down all workers
-func (r *Router) Close() {
-	// Close the queue first (stops accepting, signals workers)
-	r.queue.Close()
+func (r *Router) processRequest(req *queue.Request) {
+	req.StartTime = time.Now()
+	priorityLabel := metrics.PriorityLabel(req.Priority)
+	metrics.InferenceQueueWaitDuration.WithLabelValues(req.Model, priorityLabel).Observe(
+		req.StartTime.Sub(req.SubmitTime).Seconds(),
+	)
 
-	// Wait for in-flight requests to complete
-	r.queue.Wait()
-
-	// Close worker connections
-	for _, w := range r.workers {
-		w.Close()
+	b, err := r.registry.Route(req.Model)
+	if err != nil {
+		slog.Error("routing failed", "model", req.Model, "error", err)
+		req.ErrorCh <- err
+		metrics.InferenceRequestsTotal.WithLabelValues(req.Model, priorityLabel, "error").Inc()
+		return
 	}
-	slog.Info("all workers stopped")
+
+	slog.Info("routing request",
+		"request_id", req.ID,
+		"model", req.Model,
+		"backend", b.Name(),
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	tokenCh, err := b.Generate(ctx, &backend.Request{
+		ID:          req.ID,
+		Model:       req.Model,
+		Prompt:      req.Prompt,
+		MaxTokens:   req.MaxTokens,
+		Temperature: req.Temperature,
+		Priority:    req.Priority,
+	})
+	if err != nil {
+		slog.Error("generate failed", "backend", b.Name(), "error", err)
+		req.ErrorCh <- err
+		metrics.InferenceRequestsTotal.WithLabelValues(req.Model, priorityLabel, "error").Inc()
+		return
+	}
+
+	tokenCount := 0
+	status := "success"
+
+	for token := range tokenCh {
+		if token.Error != nil {
+			slog.Error("token error", "backend", b.Name(), "error", token.Error)
+			req.ErrorCh <- token.Error
+			status = "error"
+			break
+		}
+
+		tokenCount++
+		req.ResponseCh <- token
+
+		if token.Finished {
+			break
+		}
+	}
+
+	close(req.ResponseCh)
+
+	duration := time.Since(req.StartTime).Seconds()
+	metrics.InferenceProcessingDuration.WithLabelValues(req.Model, b.Name()).Observe(duration)
+	metrics.InferenceRequestsTotal.WithLabelValues(req.Model, priorityLabel, status).Inc()
+	metrics.InferenceTokensTotal.WithLabelValues(req.Model).Add(float64(tokenCount))
+
+	slog.Info("request completed",
+		"request_id", req.ID,
+		"model", req.Model,
+		"backend", b.Name(),
+		"tokens", tokenCount,
+		"duration_ms", int(duration*1000),
+	)
+}
+
+func (r *Router) Close() {
+	r.queue.Close()
+	r.queue.Wait()
+	r.registry.Close()
+	slog.Info("router stopped")
+}
+
+func (r *Router) Registry() *backend.Registry {
+	return r.registry
 }

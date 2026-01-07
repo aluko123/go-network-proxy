@@ -32,6 +32,9 @@ class TestResult:
     tokens_received: int = 0
 
 
+API_KEY = "sk-dev-test-key-12345"
+
+
 async def send_inference_request(
     session: aiohttp.ClientSession,
     gateway_url: str,
@@ -51,8 +54,9 @@ async def send_inference_request(
     
     tokens = []
     start = time.time()
+    headers = {"Authorization": f"Bearer {API_KEY}"}
     
-    async with session.post(f"{gateway_url}/v1/inference", json=payload) as resp:
+    async with session.post(f"{gateway_url}/v1/inference", json=payload, headers=headers) as resp:
         if resp.status != 200:
             raise Exception(f"HTTP {resp.status}: {await resp.text()}")
         
@@ -205,8 +209,9 @@ async def test_empty_prompt_rejected(session: aiohttp.ClientSession, gateway_url
     name = "empty_prompt_rejected"
     try:
         payload = {"prompt": "", "priority": 1}
+        headers = {"Authorization": f"Bearer {API_KEY}"}
         
-        async with session.post(f"{gateway_url}/v1/inference", json=payload) as resp:
+        async with session.post(f"{gateway_url}/v1/inference", json=payload, headers=headers) as resp:
             if resp.status == 400:
                 return TestResult(name, True, 0)
             else:
