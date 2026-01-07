@@ -162,6 +162,35 @@ var (
 		},
 		[]string{"reason"},
 	)
+
+	// --- Worker Health Metrics ---
+
+	// Gauge: Worker health status (1=healthy, 0=unhealthy)
+	WorkerHealthGauge = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "worker_healthy",
+			Help: "Worker health status (1=healthy, 0=unhealthy)",
+		},
+		[]string{"worker_id"},
+	)
+
+	// Gauge: Worker GPU utilization
+	WorkerGPUUtilization = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "worker_gpu_utilization",
+			Help: "Worker GPU utilization percentage",
+		},
+		[]string{"worker_id"},
+	)
+
+	// Gauge: Worker queue depth
+	WorkerQueueDepth = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "worker_queue_depth",
+			Help: "Worker queue depth",
+		},
+		[]string{"worker_id"},
+	)
 )
 
 // PriorityLabel converts numeric priority (1-10) to low/medium/high

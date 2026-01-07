@@ -20,6 +20,7 @@ type GRPCBackend struct {
 	healthy   atomic.Bool
 	nextIdx   atomic.Uint64
 	mu        sync.RWMutex
+	tracker   *HealthTracker
 }
 
 type grpcClient struct {
@@ -67,7 +68,13 @@ func NewGRPCBackend(cfg GRPCConfig) (*GRPCBackend, error) {
 		b.healthy.Store(false)
 	}
 
+	b.tracker = NewHealthTracker(b.clients, HealthTrackerConfig{})
+
 	return b, nil
+}
+
+func (g *GRPCBackend) StartHealthChecks(ctx context.Context) {
+	go g.tracker.Start(ctx)
 }
 
 func (g *GRPCBackend) Name() string     { return g.name }
@@ -95,7 +102,30 @@ func (g *GRPCBackend) getClient() *grpcClient {
 		return nil
 	}
 
-	// Round-robin with health check
+	// Health-aware selection: pick worker with best score
+	var best *grpcClient
+	var bestScore float64 = -1
+
+	for _, client := range g.clients {
+		health := g.tracker.Get(client.address)
+		if !health.Healthy {
+			continue
+		}
+
+		// Score: lower GPU util + lower queue = better
+		// GPU util is 0-100, queue depth weighted by 10
+		score := 100 - float64(health.GPUUtilization) - float64(health.QueueDepth*10)
+		if score > bestScore {
+			bestScore = score
+			best = client
+		}
+	}
+
+	if best != nil {
+		return best
+	}
+
+	// Fallback: round-robin among any available
 	for i := 0; i < len(g.clients); i++ {
 		idx := g.nextIdx.Add(1) % uint64(len(g.clients))
 		client := g.clients[idx]
@@ -104,7 +134,7 @@ func (g *GRPCBackend) getClient() *grpcClient {
 		}
 	}
 
-	// Fall back to any client
+	// Last resort: return first client
 	return g.clients[0]
 }
 

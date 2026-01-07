@@ -11,7 +11,7 @@
 ## Phase 2: Core Features
 
 - [X] Model routing - Route by model name to specific backends (OpenAI, Anthropic, gRPC)
-- [ ] Health-aware routing - Use `Health` RPC, skip unhealthy workers
+- [X] Health-aware routing - Periodic health checks, GPU-aware worker selection
 - [ ] Request coalescing - Dedupe identical prompts in-flight
 
 ## Phase 3: Advanced

@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -58,7 +59,6 @@ func BuildRegistry(cfg *BackendsConfig) (*Registry, error) {
 		}
 
 		var b Backend
-		var err error
 
 		switch bc.Type {
 		case "openai":
@@ -78,7 +78,7 @@ func BuildRegistry(cfg *BackendsConfig) (*Registry, error) {
 			})
 
 		case "grpc":
-			b, err = NewGRPCBackend(GRPCConfig{
+			grpcBackend, err := NewGRPCBackend(GRPCConfig{
 				Name:      bc.Name,
 				Addresses: bc.Addresses,
 				Models:    bc.Models,
@@ -86,6 +86,8 @@ func BuildRegistry(cfg *BackendsConfig) (*Registry, error) {
 			if err != nil {
 				return nil, fmt.Errorf("create grpc backend %s: %w", bc.Name, err)
 			}
+			grpcBackend.StartHealthChecks(context.Background())
+			b = grpcBackend
 
 		default:
 			return nil, fmt.Errorf("unknown backend type: %s", bc.Type)
