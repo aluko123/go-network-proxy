@@ -41,7 +41,8 @@ async def send_inference_request(
     prompt: str,
     priority: int = 1,
     max_tokens: int = 50,
-    model: str = "default"
+    model: str = "default",
+    prefix: str = ""
 ) -> tuple[List[str], float]:
     """Send an inference request and collect streamed tokens."""
     payload = {
@@ -51,6 +52,8 @@ async def send_inference_request(
         "model": model,
         "temperature": 0.7
     }
+    if prefix:
+        payload["prefix"] = prefix
     
     tokens = []
     start = time.time()
@@ -221,6 +224,41 @@ async def test_empty_prompt_rejected(session: aiohttp.ClientSession, gateway_url
         return TestResult(name, False, 0, str(e))
 
 
+async def test_prefix_affinity(session: aiohttp.ClientSession, gateway_url: str) -> TestResult:
+    """Test that requests with prefix are handled correctly."""
+    name = "prefix_affinity"
+    try:
+        shared_prefix = "You are a helpful coding assistant that writes clean Python code."
+        
+        # Send multiple requests with the same prefix
+        tasks = [
+            send_inference_request(
+                session, gateway_url,
+                prompt=f"Write a function that {task}",
+                prefix=shared_prefix,
+                priority=5
+            )
+            for task in ["sorts a list", "reverses a string", "finds the maximum", "counts words", "calculates sum"]
+        ]
+        
+        start = time.time()
+        responses = await asyncio.gather(*tasks)
+        total_duration = (time.time() - start) * 1000
+        
+        successful = sum(1 for tokens, _ in responses if len(tokens) > 0)
+        total_tokens = sum(len(tokens) for tokens, _ in responses)
+        
+        if successful == 5:
+            return TestResult(name, True, total_duration, 
+                tokens_received=total_tokens,
+                error="Check prefix_cache_hits_total metric for affinity verification")
+        else:
+            return TestResult(name, False, total_duration, f"Only {successful}/5 succeeded")
+    
+    except Exception as e:
+        return TestResult(name, False, 0, str(e))
+
+
 async def run_all_tests(gateway_url: str):
     """Run all integration tests."""
     print(f"\n{'='*60}")
@@ -238,6 +276,7 @@ async def run_all_tests(gateway_url: str):
             ("empty_prompt", lambda: test_empty_prompt_rejected(session, gateway_url)),
             ("basic", lambda: test_basic_inference(session, gateway_url)),
             ("priority", lambda: test_priority_ordering(session, gateway_url)),
+            ("prefix_affinity", lambda: test_prefix_affinity(session, gateway_url)),
             ("concurrent_5", lambda: test_concurrent_requests(session, gateway_url, 5)),
             ("concurrent_10", lambda: test_concurrent_requests(session, gateway_url, 10)),
         ]

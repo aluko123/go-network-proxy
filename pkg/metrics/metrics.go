@@ -191,6 +191,42 @@ var (
 		},
 		[]string{"worker_id"},
 	)
+
+	// --- Prefix Cache Metrics ---
+
+	// Counter: Prefix cache hits (routing decision used cached prefix info)
+	PrefixCacheHits = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "prefix_cache_hits_total",
+			Help: "Total routing decisions where prefix cache hit influenced worker selection",
+		},
+		[]string{"model"},
+	)
+
+	// Counter: Prefix cache misses (no cached prefix info available)
+	PrefixCacheMisses = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "prefix_cache_misses_total",
+			Help: "Total routing decisions where no prefix cache info was available",
+		},
+		[]string{"model"},
+	)
+
+	// Gauge: Number of unique prefixes tracked
+	PrefixCacheSize = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "prefix_cache_entries",
+			Help: "Number of unique prefixes currently tracked in the prefix index",
+		},
+	)
+
+	// Gauge: Total prefix-to-worker mappings
+	PrefixCacheMappings = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "prefix_cache_mappings",
+			Help: "Total number of prefix-to-worker mappings in the index",
+		},
+	)
 )
 
 // PriorityLabel converts numeric priority (1-10) to low/medium/high

@@ -66,6 +66,15 @@ MODELS = ["gpt-small", "gpt-large", "default"]
 PRIORITIES = [1, 2, 3, 5, 7, 10]
 API_KEY = "sk-dev-test-key-12345"
 
+# System prompts for prefix affinity testing
+SYSTEM_PROMPTS = [
+    "You are a helpful coding assistant.",
+    "You are a math tutor who explains step by step.",
+    "You are a creative writing helper.",
+    "You are a technical documentation expert.",
+    "",  # Some requests without prefix
+]
+
 
 async def send_request(
     session: aiohttp.ClientSession,
@@ -77,6 +86,7 @@ async def send_request(
     prompt = random.choice(SAMPLE_PROMPTS)
     model = random.choice(MODELS)
     priority = random.choice(PRIORITIES)
+    prefix = random.choice(SYSTEM_PROMPTS)
     
     payload = {
         "prompt": prompt,
@@ -85,6 +95,8 @@ async def send_request(
         "model": model,
         "temperature": 0.7
     }
+    if prefix:
+        payload["prefix"] = prefix
     
     start = time.time()
     first_token_time = None

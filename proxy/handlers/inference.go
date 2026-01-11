@@ -25,6 +25,7 @@ func NewInferenceHandler(pq *queue.PriorityQueue) *InferenceHandler {
 func (h *InferenceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var reqBody struct {
 		Prompt      string  `json:"prompt"`
+		Prefix      string  `json:"prefix"` // Optional: cacheable prefix for KV cache affinity
 		MaxTokens   int     `json:"max_tokens"`
 		Temperature float32 `json:"temperature"`
 		Model       string  `json:"model"`
@@ -61,6 +62,7 @@ func (h *InferenceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	req := &queue.Request{
 		ID:          reqID,
 		Prompt:      reqBody.Prompt,
+		Prefix:      reqBody.Prefix,
 		MaxTokens:   reqBody.MaxTokens,
 		Temperature: reqBody.Temperature,
 		Model:       reqBody.Model,

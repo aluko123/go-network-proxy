@@ -6,21 +6,25 @@ import (
 	"log/slog"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	pb "github.com/aluko123/go-network-proxy/inference/pb"
+	"github.com/aluko123/go-network-proxy/pkg/metrics"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
 type GRPCBackend struct {
-	name      string
-	addresses []string
-	models    []string
-	clients   []*grpcClient
-	healthy   atomic.Bool
-	nextIdx   atomic.Uint64
-	mu        sync.RWMutex
-	tracker   *HealthTracker
+	name           string
+	addresses      []string
+	models         []string
+	clients        []*grpcClient
+	healthy        atomic.Bool
+	nextIdx        atomic.Uint64
+	mu             sync.RWMutex
+	tracker        *HealthTracker
+	prefixIndex    *PrefixIndex
+	cacheHitWeight float64 // Bonus score for workers with cached prefix (default: 20)
 }
 
 type grpcClient struct {
@@ -31,17 +35,26 @@ type grpcClient struct {
 }
 
 type GRPCConfig struct {
-	Name      string
-	Addresses []string
-	Models    []string
+	Name           string
+	Addresses      []string
+	Models         []string
+	CacheHitWeight float64 // Bonus for prefix cache hits (default: 20)
+	PrefixTTL      time.Duration
 }
 
 func NewGRPCBackend(cfg GRPCConfig) (*GRPCBackend, error) {
+	cacheHitWeight := cfg.CacheHitWeight
+	if cacheHitWeight == 0 {
+		cacheHitWeight = 20 // Default: cache hit worth 20% GPU utilization difference
+	}
+
 	b := &GRPCBackend{
-		name:      cfg.Name,
-		addresses: cfg.Addresses,
-		models:    cfg.Models,
-		clients:   make([]*grpcClient, 0, len(cfg.Addresses)),
+		name:           cfg.Name,
+		addresses:      cfg.Addresses,
+		models:         cfg.Models,
+		clients:        make([]*grpcClient, 0, len(cfg.Addresses)),
+		cacheHitWeight: cacheHitWeight,
+		prefixIndex:    NewPrefixIndex(PrefixIndexConfig{TTL: cfg.PrefixTTL}),
 	}
 	b.healthy.Store(true)
 
@@ -82,6 +95,10 @@ func (g *GRPCBackend) Type() string     { return "grpc" }
 func (g *GRPCBackend) Models() []string { return g.models }
 func (g *GRPCBackend) Healthy() bool    { return g.healthy.Load() }
 
+func (g *GRPCBackend) PrefixStats() (prefixCount, workerMappings int) {
+	return g.prefixIndex.Stats()
+}
+
 func (g *GRPCBackend) Close() error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -94,7 +111,7 @@ func (g *GRPCBackend) Close() error {
 	return nil
 }
 
-func (g *GRPCBackend) getClient() *grpcClient {
+func (g *GRPCBackend) getClientForRequest(req *Request) *grpcClient {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 
@@ -102,7 +119,12 @@ func (g *GRPCBackend) getClient() *grpcClient {
 		return nil
 	}
 
-	// Health-aware selection: pick worker with best score
+	var prefixHash string
+	var hasCacheHit bool
+	if req.Prefix != "" {
+		prefixHash = HashPrefix(req.Model, req.Prefix)
+	}
+
 	var best *grpcClient
 	var bestScore float64 = -1
 
@@ -112,12 +134,33 @@ func (g *GRPCBackend) getClient() *grpcClient {
 			continue
 		}
 
-		// Score: lower GPU util + lower queue = better
+		// Base score: lower GPU util + lower queue = better
 		// GPU util is 0-100, queue depth weighted by 10
 		score := 100 - float64(health.GPUUtilization) - float64(health.QueueDepth*10)
+
+		// Prefix affinity bonus: if this worker likely has the prefix cached
+		if prefixHash != "" && g.prefixIndex.HasWorker(prefixHash, client.address) {
+			score += g.cacheHitWeight
+			hasCacheHit = true
+			slog.Debug("prefix cache hit bonus",
+				"worker", client.address,
+				"prefix_hash", prefixHash[:8],
+				"bonus", g.cacheHitWeight,
+			)
+		}
+
 		if score > bestScore {
 			bestScore = score
 			best = client
+		}
+	}
+
+	// Record prefix cache metrics
+	if prefixHash != "" {
+		if hasCacheHit {
+			metrics.PrefixCacheHits.WithLabelValues(req.Model).Inc()
+		} else {
+			metrics.PrefixCacheMisses.WithLabelValues(req.Model).Inc()
 		}
 	}
 
@@ -141,10 +184,27 @@ func (g *GRPCBackend) getClient() *grpcClient {
 func (g *GRPCBackend) Generate(ctx context.Context, req *Request) (<-chan Token, error) {
 	tokenCh := make(chan Token, 100)
 
-	client := g.getClient()
+	client := g.getClientForRequest(req)
 	if client == nil {
 		close(tokenCh)
 		return nil, io.EOF
+	}
+
+	// Record prefix→worker mapping for future affinity routing
+	if req.Prefix != "" {
+		prefixHash := HashPrefix(req.Model, req.Prefix)
+		g.prefixIndex.Record(prefixHash, client.address)
+
+		// Update prefix cache gauges
+		prefixCount, mappings := g.prefixIndex.Stats()
+		metrics.PrefixCacheSize.Set(float64(prefixCount))
+		metrics.PrefixCacheMappings.Set(float64(mappings))
+
+		slog.Debug("recorded prefix routing",
+			"request_id", req.ID,
+			"prefix_hash", prefixHash[:8],
+			"worker", client.address,
+		)
 	}
 
 	go func() {
@@ -154,6 +214,7 @@ func (g *GRPCBackend) Generate(ctx context.Context, req *Request) (<-chan Token,
 			RequestId:   req.ID,
 			Model:       req.Model,
 			Prompt:      req.Prompt,
+			Prefix:      req.Prefix,
 			MaxTokens:   int32(req.MaxTokens),
 			Temperature: req.Temperature,
 			Priority:    int32(req.Priority),

@@ -1,7 +1,7 @@
 # Backend Configuration
 # API keys are loaded from environment variables for security
 
-default: local-gpu
+default: local-vllm
 
 backends:
   # OpenAI GPT models
@@ -25,15 +25,24 @@ backends:
       - claude-3-haiku-20240307
       - claude-3-5-sonnet-20241022
 
-  # Local GPU workers (gRPC)
-  - name: local-gpu
+  # Local GPU workers (gRPC) - for custom Python workers
+  - name: local-grpc
     type: grpc
     addresses:
       - localhost:50051
       - localhost:50052
     models:
+      - mock-gpt
+
+  # vLLM server - production-grade local inference
+  # Start with: vllm serve meta-llama/Llama-2-7b-hf --port 8000
+  # Or mock:    python workers/mock_vllm_server.py --port 8000
+  - name: local-vllm
+    type: vllm
+    base_url: http://localhost:8000
+    models:
       - llama-70b
       - llama-7b
       - mistral-7b
-      - mock-gpt
+      - mock-llama
       - default

@@ -67,3 +67,9 @@ func (ks *KeyStore) Count() int {
 	defer ks.mu.RUnlock()
 	return len(ks.keys)
 }
+
+func (ks *KeyStore) Add(key, name string) {
+	ks.mu.Lock()
+	defer ks.mu.Unlock()
+	ks.keys[key] = KeyInfo{Key: key, Name: name}
+}

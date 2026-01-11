@@ -13,6 +13,7 @@ type Request struct {
 	ID          string
 	Model       string
 	Prompt      string
+	Prefix      string  // Cacheable prefix for KV cache affinity routing
 	MaxTokens   int
 	Temperature float32
 	Priority    int // Higher number = Higher priority

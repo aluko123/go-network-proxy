@@ -17,6 +17,7 @@ message GenerateRequest {
   float temperature = 4;
   int32 max_tokens = 5;
   int32 priority = 6; // 0=Low, 1=High (For Priority Queue)
+  string prefix = 7;  // Cacheable prefix for KV cache reuse (system prompt, etc.)
 }
 
 message TokenResponse {

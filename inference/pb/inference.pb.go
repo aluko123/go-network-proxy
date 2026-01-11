@@ -29,6 +29,7 @@ type GenerateRequest struct {
 	Temperature   float32                `protobuf:"fixed32,4,opt,name=temperature,proto3" json:"temperature,omitempty"`
 	MaxTokens     int32                  `protobuf:"varint,5,opt,name=max_tokens,json=maxTokens,proto3" json:"max_tokens,omitempty"`
 	Priority      int32                  `protobuf:"varint,6,opt,name=priority,proto3" json:"priority,omitempty"` // 0=Low, 1=High (For Priority Queue)
+	Prefix        string                 `protobuf:"bytes,7,opt,name=prefix,proto3" json:"prefix,omitempty"`      // Cacheable prefix for KV cache reuse (system prompt, etc.)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -103,6 +104,13 @@ func (x *GenerateRequest) GetPriority() int32 {
 		return x.Priority
 	}
 	return 0
+}
+
+func (x *GenerateRequest) GetPrefix() string {
+	if x != nil {
+		return x.Prefix
+	}
+	return ""
 }
 
 type TokenResponse struct {
@@ -281,7 +289,7 @@ var File_inference_proto protoreflect.FileDescriptor
 
 const file_inference_proto_rawDesc = "" +
 	"\n" +
-	"\x0finference.proto\x12\tinference\"\xbb\x01\n" +
+	"\x0finference.proto\x12\tinference\"\xd3\x01\n" +
 	"\x0fGenerateRequest\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x14\n" +
@@ -290,7 +298,8 @@ const file_inference_proto_rawDesc = "" +
 	"\vtemperature\x18\x04 \x01(\x02R\vtemperature\x12\x1d\n" +
 	"\n" +
 	"max_tokens\x18\x05 \x01(\x05R\tmaxTokens\x12\x1a\n" +
-	"\bpriority\x18\x06 \x01(\x05R\bpriority\"\x97\x01\n" +
+	"\bpriority\x18\x06 \x01(\x05R\bpriority\x12\x16\n" +
+	"\x06prefix\x18\a \x01(\tR\x06prefix\"\x97\x01\n" +
 	"\rTokenResponse\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x14\n" +

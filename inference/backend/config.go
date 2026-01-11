@@ -89,6 +89,15 @@ func BuildRegistry(cfg *BackendsConfig) (*Registry, error) {
 			grpcBackend.StartHealthChecks(context.Background())
 			b = grpcBackend
 
+		case "vllm":
+			vllmBackend := NewVLLMBackend(VLLMConfig{
+				Name:    bc.Name,
+				BaseURL: bc.BaseURL,
+				Models:  bc.Models,
+			})
+			vllmBackend.StartHealthChecks(context.Background(), 0)
+			b = vllmBackend
+
 		default:
 			return nil, fmt.Errorf("unknown backend type: %s", bc.Type)
 		}

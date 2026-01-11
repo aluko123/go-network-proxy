@@ -76,6 +76,7 @@ func (r *Router) processRequest(req *queue.Request) {
 		ID:          req.ID,
 		Model:       req.Model,
 		Prompt:      req.Prompt,
+		Prefix:      req.Prefix,
 		MaxTokens:   req.MaxTokens,
 		Temperature: req.Temperature,
 		Priority:    req.Priority,
