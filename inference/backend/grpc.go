@@ -177,8 +177,8 @@ func (g *GRPCBackend) getClientForRequest(req *Request) *grpcClient {
 		}
 	}
 
-	// Last resort: return first client
-	return g.clients[0]
+	// Last resort: return nil (no healthy workers available)
+	return nil
 }
 
 func (g *GRPCBackend) Generate(ctx context.Context, req *Request) (<-chan Token, error) {
