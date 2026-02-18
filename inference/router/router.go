@@ -2,6 +2,8 @@ package router
 
 import (
 	"context"
+	"fmt"
+	"hash/fnv"
 	"log/slog"
 	"time"
 
@@ -55,7 +57,15 @@ func (r *Router) processRequest(req *queue.Request) {
 		req.StartTime.Sub(req.SubmitTime).Seconds(),
 	)
 
-	b, err := r.registry.Route(req.Model)
+	backends, err := r.registry.RouteAll(req.Model)
+	if err != nil {
+		slog.Error("routing failed", "model", req.Model, "error", err)
+		req.ErrorCh <- err
+		metrics.InferenceRequestsTotal.WithLabelValues(req.Model, priorityLabel, "error").Inc()
+		return
+	}
+
+	b, err := r.selectBackend(backends, req)
 	if err != nil {
 		slog.Error("routing failed", "model", req.Model, "error", err)
 		req.ErrorCh <- err
@@ -69,7 +79,11 @@ func (r *Router) processRequest(req *queue.Request) {
 		"backend", b.Name(),
 	)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	baseCtx := req.Context
+	if baseCtx == nil {
+		baseCtx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(baseCtx, 5*time.Minute)
 	defer cancel()
 
 	tokenCh, err := b.Generate(ctx, &backend.Request{
@@ -121,6 +135,35 @@ func (r *Router) processRequest(req *queue.Request) {
 		"tokens", tokenCount,
 		"duration_ms", int(duration*1000),
 	)
+}
+
+func (r *Router) selectBackend(backends []backend.Backend, req *queue.Request) (backend.Backend, error) {
+	if len(backends) == 0 {
+		return nil, fmt.Errorf("no backends available")
+	}
+
+	healthy := make([]backend.Backend, 0, len(backends))
+	for _, b := range backends {
+		if b.Healthy() {
+			healthy = append(healthy, b)
+		}
+	}
+
+	if len(healthy) == 0 {
+		return nil, fmt.Errorf("no healthy backends available")
+	}
+	if len(healthy) == 1 {
+		return healthy[0], nil
+	}
+
+	idx := hashRequestID(req.ID) % uint64(len(healthy))
+	return healthy[idx], nil
+}
+
+func hashRequestID(id string) uint64 {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(id))
+	return h.Sum64()
 }
 
 func (r *Router) Close() {

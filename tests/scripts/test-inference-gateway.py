@@ -9,7 +9,7 @@ Usage:
        python workers/mock_server.py --model large-model --port 50052
 
     2. Start the gateway:
-       go run cmd/gateway/main.go -worker-addrs "localhost:50051,localhost:50052"
+       go run cmd/gateway/main.go -backends configs/backends.yaml
 
     3. Run this test:
        python tests/scripts/test-inference-gateway.py

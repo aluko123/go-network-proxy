@@ -11,7 +11,7 @@ Usage:
 
     2. Start the gateway with all workers:
        go run cmd/gateway/main.go \
-         -worker-addrs "localhost:50051,localhost:50052,localhost:50053" \
+         -backends configs/backends.yaml \
          -limiter memory \
          -rate-limit 10000 \
          -rate-burst 1000

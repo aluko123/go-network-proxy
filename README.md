@@ -11,7 +11,7 @@ A GPU-native LLM inference gateway and HTTP proxy written in Go. Optimized for s
 - **Priority queue** - High-priority requests processed first
 - **SSE streaming** - Real-time token streaming to clients
 
-### Forward Proxy
+### Forward Proxy (Optional)
 - HTTP/HTTPS support (CONNECT tunneling)
 - Domain blocking (exact + wildcard matching)
 - Rate limiting (in-memory or Redis-based)
@@ -29,6 +29,9 @@ python workers/mock_server.py --model llama-70b --port 50052 &
 
 # Run the gateway
 go run cmd/gateway/main.go -backends configs/backends.yaml
+
+# Enable forward proxy handlers
+go run cmd/gateway/main.go -backends configs/backends.yaml -enable-proxy
 ```
 
 ## API Reference
@@ -99,11 +102,11 @@ Client → Gateway → Priority Queue → Router → GPU Workers
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-backends` | "" | Path to backends.yaml config |
-| `-worker-addrs` | "" | Comma-separated gRPC worker addresses |
+| `-router-workers` | 10 | Number of router worker goroutines |
 | `-limiter` | redis | Rate limiter: memory or redis |
 | `-rate-limit` | 100 | Requests per minute per IP |
 | `-rate-burst` | 20 | Burst size |
-| `-inference-timeout` | 5m | Max inference request duration |
+| `-enable-proxy` | false | Enable forward proxy handlers |
 
 ## Metrics
 

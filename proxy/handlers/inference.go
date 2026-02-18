@@ -68,6 +68,7 @@ func (h *InferenceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Model:       reqBody.Model,
 		Priority:    reqBody.Priority,
 		SubmitTime:  time.Now(),
+		Context:     r.Context(),
 		ResponseCh:  make(chan any, 100),
 		ErrorCh:     make(chan error, 1),
 	}
@@ -87,14 +88,11 @@ func (h *InferenceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	priorityLabel := metrics.PriorityLabel(req.Priority)
 	var firstTokenReceived bool
 	var lastTokenCount int
-	status := "success"
 
 	defer func() {
 		metrics.InferenceRequestDuration.WithLabelValues(req.Model).Observe(time.Since(req.SubmitTime).Seconds())
-		metrics.InferenceRequestsTotal.WithLabelValues(req.Model, priorityLabel, status).Inc()
 	}()
 
 	for {
@@ -134,13 +132,11 @@ func (h *InferenceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 
 		case err := <-req.ErrorCh:
-			status = "error"
 			fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
 			flusher.Flush()
 			return
 
 		case <-r.Context().Done():
-			status = "cancelled"
 			return
 		}
 	}

@@ -23,6 +23,10 @@ type Request struct {
 	MaxTokens   int
 	Temperature float32
 	Priority    int
+
+	// Distributed inference requirements
+	RequiresDistributed bool // If true, only route to workers with active InfiniBand
+	TensorParallel      int  // Number of GPUs for tensor parallelism (0 = auto)
 }
 
 type Backend interface {
@@ -37,14 +41,14 @@ type Backend interface {
 type Registry struct {
 	mu            sync.RWMutex
 	backends      []Backend
-	modelToBackend map[string]Backend
+	modelToBackend map[string][]Backend
 	defaultBackend Backend
 }
 
 func NewRegistry() *Registry {
 	return &Registry{
 		backends:       make([]Backend, 0),
-		modelToBackend: make(map[string]Backend),
+		modelToBackend: make(map[string][]Backend),
 	}
 }
 
@@ -55,13 +59,7 @@ func (r *Registry) Register(b Backend) {
 	r.backends = append(r.backends, b)
 
 	for _, model := range b.Models() {
-		if existing, ok := r.modelToBackend[model]; ok {
-			slog.Warn("model already registered, overwriting",
-				"model", model,
-				"old_backend", existing.Name(),
-				"new_backend", b.Name())
-		}
-		r.modelToBackend[model] = b
+		r.modelToBackend[model] = append(r.modelToBackend[model], b)
 		slog.Info("registered model", "model", model, "backend", b.Name())
 	}
 
@@ -94,8 +92,8 @@ func (r *Registry) Route(model string) (Backend, error) {
 		return nil, fmt.Errorf("no default backend configured")
 	}
 
-	if b, ok := r.modelToBackend[model]; ok {
-		return b, nil
+	if backends, ok := r.modelToBackend[model]; ok && len(backends) > 0 {
+		return backends[0], nil
 	}
 
 	return nil, fmt.Errorf("unknown model: %s", model)
@@ -110,6 +108,24 @@ func (r *Registry) ListModels() []string {
 		models = append(models, model)
 	}
 	return models
+}
+
+func (r *Registry) RouteAll(model string) ([]Backend, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	if model == "" || model == "default" {
+		if r.defaultBackend != nil {
+			return []Backend{r.defaultBackend}, nil
+		}
+		return nil, fmt.Errorf("no default backend configured")
+	}
+
+	if backends, ok := r.modelToBackend[model]; ok && len(backends) > 0 {
+		return append([]Backend(nil), backends...), nil
+	}
+
+	return nil, fmt.Errorf("unknown model: %s", model)
 }
 
 func (r *Registry) ListBackends() []Backend {

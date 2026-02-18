@@ -2,6 +2,7 @@ package queue
 
 import (
 	"container/heap"
+	"context"
 	"sync"
 	"time"
 
@@ -19,6 +20,7 @@ type Request struct {
 	Priority    int // Higher number = Higher priority
 	SubmitTime  time.Time
 	StartTime   time.Time // When worker began processing
+	Context     context.Context
 
 	// Channels for response handling (uses any to support multiple backend types)
 	ResponseCh chan any

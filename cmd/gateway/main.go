@@ -24,29 +24,40 @@ import (
 	"golang.org/x/time/rate"
 )
 
+// getEnv returns the value of an environment variable or a default
+func getEnv(key, defaultVal string) string {
+	if val := os.Getenv(key); val != "" {
+		return val
+	}
+	return defaultVal
+}
+
 func main() {
 	var (
-		pemPath      string
-		keyPath      string
-		proto        string
-		limiterType  string
-		redisAddr    string
-		rateLimit    int
-		rateBurst    int
-		backendsFile string
-		logFormat    string
-		routerWorkers int
+		pemPath        string
+		keyPath        string
+		proto          string
+		listenAddr     string
+		limiterType    string
+		redisAddr      string
+		rateLimit      int
+		rateBurst      int
+		backendsFile   string
+		logFormat      string
+		routerWorkers  int
+		enableProxy    bool
 
-		readTimeout      time.Duration
-		writeTimeout     time.Duration
-		idleTimeout      time.Duration
-		dialTimeout      time.Duration
-		shutdownTimeout  time.Duration
+		readTimeout     time.Duration
+		writeTimeout    time.Duration
+		idleTimeout     time.Duration
+		dialTimeout     time.Duration
+		shutdownTimeout time.Duration
 	)
 
 	flag.StringVar(&pemPath, "pem", "server.pem", "path to pem file")
 	flag.StringVar(&keyPath, "key", "server.key", "path to key file")
 	flag.StringVar(&proto, "proto", "http", "protocol to use: http or https")
+	flag.StringVar(&listenAddr, "addr", getEnv("GATEWAY_PORT", ":8080"), "listen address (e.g., :8080)")
 
 	flag.StringVar(&limiterType, "limiter", "redis", "Rate limiter type: memory or redis")
 	flag.StringVar(&redisAddr, "redis-addr", "localhost:6379", "Redis server address")
@@ -55,6 +66,7 @@ func main() {
 
 	flag.StringVar(&backendsFile, "backends", "configs/backends.yaml", "Path to backends config file")
 	flag.IntVar(&routerWorkers, "router-workers", 10, "Number of router worker goroutines")
+	flag.BoolVar(&enableProxy, "enable-proxy", false, "Enable forward proxy handlers")
 
 	flag.StringVar(&logFormat, "log-format", "json", "Log format: json or text")
 
@@ -140,6 +152,34 @@ func main() {
 
 	mux.Handle("/metrics", promhttp.Handler())
 
+	// Health check endpoint - is the server alive?
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"healthy"}`))
+	})
+
+	// Readiness endpoint - can the server accept traffic?
+	// Returns 200 if we have at least one healthy backend
+	mux.HandleFunc("/ready", func(w http.ResponseWriter, r *http.Request) {
+		backends := registry.ListBackends()
+		healthyCount := 0
+		for _, b := range backends {
+			if b.Healthy() {
+				healthyCount++
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		if healthyCount > 0 || len(backends) == 0 {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"status":"ready","healthy_backends":` + string(rune('0'+healthyCount)) + `}`))
+		} else {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte(`{"status":"not_ready","healthy_backends":0}`))
+		}
+	})
+
 	// Models endpoint - list available models
 	mux.HandleFunc("/v1/models", func(w http.ResponseWriter, r *http.Request) {
 		models := registry.ListModels()
@@ -165,17 +205,23 @@ func main() {
 	authedInference := middleware.WithAPIKeyAuth(keyStore)(inferenceHandler)
 	mux.Handle("/v1/inference", authedInference)
 
-	// Forward Proxy (Catch-all)
-	proxyHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodConnect {
-			tunnel.HandleTunneling(w, r)
-		} else {
-			handlers.HandleHTTP(w, r)
-		}
-	})
+	if enableProxy {
+		// Forward Proxy (Catch-all)
+		proxyHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodConnect {
+				tunnel.HandleTunneling(w, r)
+			} else {
+				handlers.HandleHTTP(w, r)
+			}
+		})
 
-	blockedProxy := middleware.WithBlocklist(bm)(proxyHandler)
-	mux.Handle("/", blockedProxy)
+		blockedProxy := middleware.WithBlocklist(bm)(proxyHandler)
+		mux.Handle("/", blockedProxy)
+	} else {
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			http.NotFound(w, r)
+		})
+	}
 
 	finalHandler := middleware.Chain(
 		mux,
@@ -184,8 +230,13 @@ func main() {
 		middleware.WithRequestID(),
 	)
 
+	// Ensure listen address has colon prefix
+	if listenAddr != "" && listenAddr[0] != ':' {
+		listenAddr = ":" + listenAddr
+	}
+
 	server := &http.Server{
-		Addr:         ":8080",
+		Addr:         listenAddr,
 		Handler:      finalHandler,
 		ReadTimeout:  readTimeout,
 		WriteTimeout: writeTimeout,
