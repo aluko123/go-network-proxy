@@ -61,9 +61,9 @@ tmp/
 temp/
 *.tmp
 
-# Planning files
-ROADMAP.md
-
 # Interview notes
 INTERVIEW_PREP.md
 interview.py
+
+# Planning files
+ROADMAP.md
