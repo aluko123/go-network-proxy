@@ -34,4 +34,19 @@ message HealthResponse {
   bool healthy = 1;
   int32 current_queue_size = 2;
   float gpu_utilization = 3; // Useful for load balancing!
+  
+  // GPU memory for memory-aware routing (Phase 3)
+  int64 gpu_memory_used = 4;   // Bytes used
+  int64 gpu_memory_total = 5;  // Total bytes available
+  
+  // GPU topology for multi-node awareness (ML Workloads focus)
+  int32 gpu_count = 6;              // Number of GPUs on this worker
+  string gpu_type = 7;              // e.g., "A100-80GB", "H100"
+  string interconnect_type = 8;     // "nvlink", "pcie", "none"
+  
+  // InfiniBand status for distributed inference/training
+  bool ib_available = 9;            // Is InfiniBand present?
+  string ib_state = 10;             // "Active", "Down", "Init"
+  int32 ib_width = 11;              // Link width (1, 4)
+  string ib_speed = 12;             // "HDR", "NDR", "EDR"
 }

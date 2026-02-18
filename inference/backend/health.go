@@ -26,6 +26,13 @@ type WorkerHealth struct {
 	ErrorCount     int
 	ConsecutiveErr int
 	AvgLatencyMs   float64
+
+	// GPU memory for memory-aware routing
+	GPUMemoryUsed  int64 // Bytes currently in use
+	GPUMemoryTotal int64 // Total bytes available
+
+	// Topology for multi-node awareness
+	Topology *WorkerTopology
 }
 
 type HealthTrackerConfig struct {
@@ -123,6 +130,31 @@ func (h *HealthTracker) checkWorker(ctx context.Context, client *grpcClient) {
 	status.ConsecutiveErr = 0
 	client.healthy.Store(resp.Healthy)
 
+	// GPU memory stats (for memory-aware routing)
+	status.GPUMemoryUsed = resp.GpuMemoryUsed
+	status.GPUMemoryTotal = resp.GpuMemoryTotal
+
+	// Build topology from health response
+	if resp.GpuCount > 0 || resp.GpuType != "" {
+		status.Topology = &WorkerTopology{
+			GPUCount:     int(resp.GpuCount),
+			GPUType:      resp.GpuType,
+			Interconnect: InterconnectType(resp.InterconnectType),
+			IBAvailable:  resp.IbAvailable,
+			IBState:      IBState(resp.IbState),
+			IBWidth:      int(resp.IbWidth),
+			IBSpeed:      IBSpeed(resp.IbSpeed),
+		}
+
+		// Calculate total memory if per-GPU memory known
+		if status.GPUMemoryTotal > 0 {
+			status.Topology.TotalGPUMemory = status.GPUMemoryTotal
+		} else if gpuMem := KnownGPUMemory(resp.GpuType); gpuMem > 0 {
+			status.Topology.GPUMemory = gpuMem
+			status.Topology.TotalGPUMemory = gpuMem * int64(resp.GpuCount)
+		}
+	}
+
 	healthVal := 0.0
 	if resp.Healthy {
 		healthVal = 1.0
@@ -136,6 +168,9 @@ func (h *HealthTracker) checkWorker(ctx context.Context, client *grpcClient) {
 		"healthy", resp.Healthy,
 		"gpu_util", resp.GpuUtilization,
 		"queue", resp.CurrentQueueSize,
+		"gpu_mem_used", resp.GpuMemoryUsed,
+		"gpu_mem_total", resp.GpuMemoryTotal,
+		"ib_state", resp.IbState,
 		"latency_ms", latency,
 	)
 }
@@ -145,7 +180,13 @@ func (h *HealthTracker) Get(address string) *WorkerHealth {
 	defer h.mu.RUnlock()
 
 	if status, ok := h.status[address]; ok {
-		return status
+		// Return a copy to avoid data race (caller reads while checkWorker writes)
+		copy := *status
+		if status.Topology != nil {
+			topoCopy := *status.Topology
+			copy.Topology = &topoCopy
+		}
+		return &copy
 	}
 	return &WorkerHealth{Healthy: false}
 }

@@ -230,8 +230,20 @@ type HealthResponse struct {
 	Healthy          bool                   `protobuf:"varint,1,opt,name=healthy,proto3" json:"healthy,omitempty"`
 	CurrentQueueSize int32                  `protobuf:"varint,2,opt,name=current_queue_size,json=currentQueueSize,proto3" json:"current_queue_size,omitempty"`
 	GpuUtilization   float32                `protobuf:"fixed32,3,opt,name=gpu_utilization,json=gpuUtilization,proto3" json:"gpu_utilization,omitempty"` // Useful for load balancing!
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// GPU memory for memory-aware routing (Phase 3)
+	GpuMemoryUsed  int64 `protobuf:"varint,4,opt,name=gpu_memory_used,json=gpuMemoryUsed,proto3" json:"gpu_memory_used,omitempty"`    // Bytes used
+	GpuMemoryTotal int64 `protobuf:"varint,5,opt,name=gpu_memory_total,json=gpuMemoryTotal,proto3" json:"gpu_memory_total,omitempty"` // Total bytes available
+	// GPU topology for multi-node awareness (ML Workloads focus)
+	GpuCount         int32  `protobuf:"varint,6,opt,name=gpu_count,json=gpuCount,proto3" json:"gpu_count,omitempty"`                        // Number of GPUs on this worker
+	GpuType          string `protobuf:"bytes,7,opt,name=gpu_type,json=gpuType,proto3" json:"gpu_type,omitempty"`                            // e.g., "A100-80GB", "H100"
+	InterconnectType string `protobuf:"bytes,8,opt,name=interconnect_type,json=interconnectType,proto3" json:"interconnect_type,omitempty"` // "nvlink", "pcie", "none"
+	// InfiniBand status for distributed inference/training
+	IbAvailable   bool   `protobuf:"varint,9,opt,name=ib_available,json=ibAvailable,proto3" json:"ib_available,omitempty"` // Is InfiniBand present?
+	IbState       string `protobuf:"bytes,10,opt,name=ib_state,json=ibState,proto3" json:"ib_state,omitempty"`             // "Active", "Down", "Init"
+	IbWidth       int32  `protobuf:"varint,11,opt,name=ib_width,json=ibWidth,proto3" json:"ib_width,omitempty"`            // Link width (1, 4)
+	IbSpeed       string `protobuf:"bytes,12,opt,name=ib_speed,json=ibSpeed,proto3" json:"ib_speed,omitempty"`             // "HDR", "NDR", "EDR"
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *HealthResponse) Reset() {
@@ -285,6 +297,69 @@ func (x *HealthResponse) GetGpuUtilization() float32 {
 	return 0
 }
 
+func (x *HealthResponse) GetGpuMemoryUsed() int64 {
+	if x != nil {
+		return x.GpuMemoryUsed
+	}
+	return 0
+}
+
+func (x *HealthResponse) GetGpuMemoryTotal() int64 {
+	if x != nil {
+		return x.GpuMemoryTotal
+	}
+	return 0
+}
+
+func (x *HealthResponse) GetGpuCount() int32 {
+	if x != nil {
+		return x.GpuCount
+	}
+	return 0
+}
+
+func (x *HealthResponse) GetGpuType() string {
+	if x != nil {
+		return x.GpuType
+	}
+	return ""
+}
+
+func (x *HealthResponse) GetInterconnectType() string {
+	if x != nil {
+		return x.InterconnectType
+	}
+	return ""
+}
+
+func (x *HealthResponse) GetIbAvailable() bool {
+	if x != nil {
+		return x.IbAvailable
+	}
+	return false
+}
+
+func (x *HealthResponse) GetIbState() string {
+	if x != nil {
+		return x.IbState
+	}
+	return ""
+}
+
+func (x *HealthResponse) GetIbWidth() int32 {
+	if x != nil {
+		return x.IbWidth
+	}
+	return 0
+}
+
+func (x *HealthResponse) GetIbSpeed() string {
+	if x != nil {
+		return x.IbSpeed
+	}
+	return ""
+}
+
 var File_inference_proto protoreflect.FileDescriptor
 
 const file_inference_proto_rawDesc = "" +
@@ -308,11 +383,21 @@ const file_inference_proto_rawDesc = "" +
 	"\x05error\x18\x04 \x01(\tR\x05error\x12\x1f\n" +
 	"\vtoken_count\x18\x05 \x01(\x05R\n" +
 	"tokenCount\"\x0f\n" +
-	"\rHealthRequest\"\x81\x01\n" +
+	"\rHealthRequest\"\xac\x03\n" +
 	"\x0eHealthResponse\x12\x18\n" +
 	"\ahealthy\x18\x01 \x01(\bR\ahealthy\x12,\n" +
 	"\x12current_queue_size\x18\x02 \x01(\x05R\x10currentQueueSize\x12'\n" +
-	"\x0fgpu_utilization\x18\x03 \x01(\x02R\x0egpuUtilization2\x91\x01\n" +
+	"\x0fgpu_utilization\x18\x03 \x01(\x02R\x0egpuUtilization\x12&\n" +
+	"\x0fgpu_memory_used\x18\x04 \x01(\x03R\rgpuMemoryUsed\x12(\n" +
+	"\x10gpu_memory_total\x18\x05 \x01(\x03R\x0egpuMemoryTotal\x12\x1b\n" +
+	"\tgpu_count\x18\x06 \x01(\x05R\bgpuCount\x12\x19\n" +
+	"\bgpu_type\x18\a \x01(\tR\agpuType\x12+\n" +
+	"\x11interconnect_type\x18\b \x01(\tR\x10interconnectType\x12!\n" +
+	"\fib_available\x18\t \x01(\bR\vibAvailable\x12\x19\n" +
+	"\bib_state\x18\n" +
+	" \x01(\tR\aibState\x12\x19\n" +
+	"\bib_width\x18\v \x01(\x05R\aibWidth\x12\x19\n" +
+	"\bib_speed\x18\f \x01(\tR\aibSpeed2\x91\x01\n" +
 	"\fModelService\x12B\n" +
 	"\bGenerate\x12\x1a.inference.GenerateRequest\x1a\x18.inference.TokenResponse0\x01\x12=\n" +
 	"\x06Health\x12\x18.inference.HealthRequest\x1a\x19.inference.HealthResponseB3Z1github.com/aluko123/go-network-proxy/inference/pbb\x06proto3"

@@ -156,7 +156,7 @@ func TestGRPCBackend_SelectBestWorker(t *testing.T) {
 	}
 }
 
-func TestGRPCBackend_FallbackWhenAllUnhealthy(t *testing.T) {
+func TestGRPCBackend_ReturnsNilWhenAllUnhealthy(t *testing.T) {
 	client1 := &grpcClient{address: "localhost:50051"}
 	client1.healthy.Store(false)
 	client2 := &grpcClient{address: "localhost:50052"}
@@ -174,10 +174,10 @@ func TestGRPCBackend_FallbackWhenAllUnhealthy(t *testing.T) {
 	}
 	backend.nextIdx = atomic.Uint64{}
 
-	// Should still return a client (last resort fallback)
+	// Should return nil when all workers are unhealthy (don't route to known-bad workers)
 	selected := backend.getClientForRequest(&Request{Model: "test"})
-	if selected == nil {
-		t.Fatal("expected fallback client even when all unhealthy")
+	if selected != nil {
+		t.Fatal("expected nil when all workers are unhealthy, got", selected.address)
 	}
 }
 
@@ -290,5 +290,284 @@ func TestGRPCBackend_PrefixAffinityWithQueue(t *testing.T) {
 	selected := backend.getClientForRequest(req)
 	if selected.address != "localhost:50051" {
 		t.Errorf("queue penalty should outweigh cache hit, got %s", selected.address)
+	}
+}
+
+func TestGRPCBackend_MemoryAwareRouting(t *testing.T) {
+	const GB = int64(1024 * 1024 * 1024)
+
+	client1 := &grpcClient{address: "localhost:50051"}
+	client1.healthy.Store(true)
+	client2 := &grpcClient{address: "localhost:50052"}
+	client2.healthy.Store(true)
+
+	clients := []*grpcClient{client1, client2}
+	tracker := NewHealthTracker(clients, HealthTrackerConfig{})
+
+	// Worker 1: 80GB total, 75GB used (5GB free) - memory constrained
+	tracker.status["localhost:50051"].Healthy = true
+	tracker.status["localhost:50051"].GPUUtilization = 50
+	tracker.status["localhost:50051"].GPUMemoryTotal = 80 * GB
+	tracker.status["localhost:50051"].GPUMemoryUsed = 75 * GB
+
+	// Worker 2: 80GB total, 20GB used (60GB free) - plenty of headroom
+	tracker.status["localhost:50052"].Healthy = true
+	tracker.status["localhost:50052"].GPUUtilization = 50
+	tracker.status["localhost:50052"].GPUMemoryTotal = 80 * GB
+	tracker.status["localhost:50052"].GPUMemoryUsed = 20 * GB
+
+	backend := &GRPCBackend{
+		clients:        clients,
+		tracker:        tracker,
+		prefixIndex:    NewPrefixIndex(PrefixIndexConfig{}),
+		cacheHitWeight: 20,
+		memoryWeight:   10,
+		memoryMargin:   2 * GB, // 2GB safety margin
+	}
+	backend.healthy.Store(true)
+
+	// Request for llama-70b with 32K context would need ~640MB + 2GB margin
+	// Worker 1 has 5GB free, should be skipped (5GB < 2.64GB needed... wait, that's enough)
+	// Let's make the request larger to force the skip
+	// Actually with 2GB margin, worker1 (5GB free) can handle it
+	// Let's adjust: make worker1 have only 1GB free
+	tracker.status["localhost:50051"].GPUMemoryUsed = 79 * GB // Only 1GB free
+
+	req := &Request{
+		Model:  "llama-70b",
+		Prompt: string(make([]byte, 32000*4)), // ~32K tokens worth of chars
+	}
+
+	selected := backend.getClientForRequest(req)
+	if selected == nil {
+		t.Fatal("expected a worker to be selected")
+	}
+	if selected.address != "localhost:50052" {
+		t.Errorf("expected worker with more memory (50052), got %s", selected.address)
+	}
+}
+
+func TestGRPCBackend_MemoryAwareRouting_AllConstrained(t *testing.T) {
+	const GB = int64(1024 * 1024 * 1024)
+
+	client1 := &grpcClient{address: "localhost:50051"}
+	client1.healthy.Store(true)
+
+	clients := []*grpcClient{client1}
+	tracker := NewHealthTracker(clients, HealthTrackerConfig{})
+
+	// Worker 1: 80GB total, 79GB used (1GB free) - very constrained
+	tracker.status["localhost:50051"].Healthy = true
+	tracker.status["localhost:50051"].GPUUtilization = 90
+	tracker.status["localhost:50051"].GPUMemoryTotal = 80 * GB
+	tracker.status["localhost:50051"].GPUMemoryUsed = 79 * GB
+
+	backend := &GRPCBackend{
+		clients:        clients,
+		tracker:        tracker,
+		prefixIndex:    NewPrefixIndex(PrefixIndexConfig{}),
+		cacheHitWeight: 20,
+		memoryWeight:   10,
+		memoryMargin:   2 * GB,
+	}
+	backend.healthy.Store(true)
+
+	// Large request that needs more than 1GB
+	req := &Request{
+		Model:  "llama-70b",
+		Prompt: string(make([]byte, 32000*4)), // ~32K tokens
+	}
+
+	// Should fall back to the worker anyway (better to try than reject)
+	selected := backend.getClientForRequest(req)
+	if selected == nil {
+		t.Fatal("expected fallback to constrained worker rather than nil")
+	}
+}
+
+func TestGRPCBackend_MemoryHeadroomBonus(t *testing.T) {
+	const GB = int64(1024 * 1024 * 1024)
+
+	client1 := &grpcClient{address: "localhost:50051"}
+	client1.healthy.Store(true)
+	client2 := &grpcClient{address: "localhost:50052"}
+	client2.healthy.Store(true)
+
+	clients := []*grpcClient{client1, client2}
+	tracker := NewHealthTracker(clients, HealthTrackerConfig{})
+
+	// Both workers have same GPU util, but different memory
+	// Worker 1: 50% memory free
+	tracker.status["localhost:50051"].Healthy = true
+	tracker.status["localhost:50051"].GPUUtilization = 50
+	tracker.status["localhost:50051"].GPUMemoryTotal = 80 * GB
+	tracker.status["localhost:50051"].GPUMemoryUsed = 40 * GB
+
+	// Worker 2: 80% memory free
+	tracker.status["localhost:50052"].Healthy = true
+	tracker.status["localhost:50052"].GPUUtilization = 50
+	tracker.status["localhost:50052"].GPUMemoryTotal = 80 * GB
+	tracker.status["localhost:50052"].GPUMemoryUsed = 16 * GB
+
+	backend := &GRPCBackend{
+		clients:        clients,
+		tracker:        tracker,
+		prefixIndex:    NewPrefixIndex(PrefixIndexConfig{}),
+		cacheHitWeight: 20,
+		memoryWeight:   10,
+		memoryMargin:   2 * GB,
+	}
+	backend.healthy.Store(true)
+
+	// Small request - both can handle, but worker2 should win due to memory bonus
+	// Worker 1: 100 - 50 + (0.5 * 10) = 55
+	// Worker 2: 100 - 50 + (0.8 * 10) = 58
+	req := &Request{Model: "llama-7b", Prompt: "hello"}
+	selected := backend.getClientForRequest(req)
+	if selected.address != "localhost:50052" {
+		t.Errorf("expected worker with more memory headroom (50052), got %s", selected.address)
+	}
+}
+
+func TestGRPCBackend_InfiniBandAwareRouting(t *testing.T) {
+	const GB = int64(1024 * 1024 * 1024)
+
+	client1 := &grpcClient{address: "localhost:50051"}
+	client1.healthy.Store(true)
+	client2 := &grpcClient{address: "localhost:50052"}
+	client2.healthy.Store(true)
+
+	clients := []*grpcClient{client1, client2}
+	tracker := NewHealthTracker(clients, HealthTrackerConfig{})
+
+	// Worker 1: IB Down (bad cable or switch issue)
+	tracker.status["localhost:50051"].Healthy = true
+	tracker.status["localhost:50051"].GPUUtilization = 20 // Lower util (would normally win)
+	tracker.status["localhost:50051"].Topology = &WorkerTopology{
+		GPUCount:    8,
+		IBAvailable: true,
+		IBState:     IBStateDown, // IB is down!
+	}
+
+	// Worker 2: IB Active (healthy)
+	tracker.status["localhost:50052"].Healthy = true
+	tracker.status["localhost:50052"].GPUUtilization = 50 // Higher util
+	tracker.status["localhost:50052"].Topology = &WorkerTopology{
+		GPUCount:    8,
+		IBAvailable: true,
+		IBState:     IBStateActive,
+		IBSpeed:     IBSpeedHDR,
+		IBWidth:     4,
+	}
+
+	backend := &GRPCBackend{
+		clients:        clients,
+		tracker:        tracker,
+		prefixIndex:    NewPrefixIndex(PrefixIndexConfig{}),
+		cacheHitWeight: 20,
+		memoryWeight:   10,
+		memoryMargin:   2 * GB,
+	}
+	backend.healthy.Store(true)
+
+	// Non-distributed request: should pick worker 1 (lower GPU util)
+	req := &Request{Model: "llama-7b", Prompt: "hello", RequiresDistributed: false}
+	selected := backend.getClientForRequest(req)
+	if selected.address != "localhost:50051" {
+		t.Errorf("non-distributed request should pick lower util worker, got %s", selected.address)
+	}
+
+	// Distributed request: must pick worker 2 (IB Active)
+	req = &Request{Model: "llama-7b", Prompt: "hello", RequiresDistributed: true}
+	selected = backend.getClientForRequest(req)
+	if selected.address != "localhost:50052" {
+		t.Errorf("distributed request should skip IB Down worker, got %s", selected.address)
+	}
+}
+
+func TestGRPCBackend_TensorParallelRouting(t *testing.T) {
+	client1 := &grpcClient{address: "localhost:50051"}
+	client1.healthy.Store(true)
+	client2 := &grpcClient{address: "localhost:50052"}
+	client2.healthy.Store(true)
+
+	clients := []*grpcClient{client1, client2}
+	tracker := NewHealthTracker(clients, HealthTrackerConfig{})
+
+	// Worker 1: PCIe only (no NVLink)
+	tracker.status["localhost:50051"].Healthy = true
+	tracker.status["localhost:50051"].GPUUtilization = 20
+	tracker.status["localhost:50051"].Topology = &WorkerTopology{
+		GPUCount:     4,
+		Interconnect: InterconnectPCIe,
+	}
+
+	// Worker 2: NVLink (good for tensor parallel)
+	tracker.status["localhost:50052"].Healthy = true
+	tracker.status["localhost:50052"].GPUUtilization = 50
+	tracker.status["localhost:50052"].Topology = &WorkerTopology{
+		GPUCount:     8,
+		Interconnect: InterconnectNVLink,
+	}
+
+	backend := &GRPCBackend{
+		clients:        clients,
+		tracker:        tracker,
+		prefixIndex:    NewPrefixIndex(PrefixIndexConfig{}),
+		cacheHitWeight: 20,
+		memoryWeight:   10,
+		memoryMargin:   2 * 1024 * 1024 * 1024,
+	}
+	backend.healthy.Store(true)
+
+	// Non-TP request: should pick worker 1 (lower GPU util)
+	req := &Request{Model: "llama-7b", Prompt: "hello", TensorParallel: 0}
+	selected := backend.getClientForRequest(req)
+	if selected.address != "localhost:50051" {
+		t.Errorf("non-TP request should pick lower util worker, got %s", selected.address)
+	}
+
+	// TP=4 request: must pick worker 2 (has NVLink)
+	req = &Request{Model: "llama-70b", Prompt: "hello", TensorParallel: 4}
+	selected = backend.getClientForRequest(req)
+	if selected.address != "localhost:50052" {
+		t.Errorf("tensor parallel request should skip PCIe-only worker, got %s", selected.address)
+	}
+}
+
+func TestGRPCBackend_IBStateInit(t *testing.T) {
+	client1 := &grpcClient{address: "localhost:50051"}
+	client1.healthy.Store(true)
+
+	clients := []*grpcClient{client1}
+	tracker := NewHealthTracker(clients, HealthTrackerConfig{})
+
+	// Worker 1: IB Init (physical up, but no subnet manager)
+	// This is a common issue: SM not running or cable just connected
+	tracker.status["localhost:50051"].Healthy = true
+	tracker.status["localhost:50051"].Topology = &WorkerTopology{
+		GPUCount:    8,
+		IBAvailable: true,
+		IBState:     IBStateInit, // Not fully active!
+	}
+
+	backend := &GRPCBackend{
+		clients:        clients,
+		tracker:        tracker,
+		prefixIndex:    NewPrefixIndex(PrefixIndexConfig{}),
+		cacheHitWeight: 20,
+		memoryWeight:   10,
+		memoryMargin:   2 * 1024 * 1024 * 1024,
+	}
+	backend.healthy.Store(true)
+
+	// Distributed request should skip Init state (not usable for NCCL)
+	req := &Request{Model: "llama-7b", Prompt: "hello", RequiresDistributed: true}
+	selected := backend.getClientForRequest(req)
+
+	// Should fall back since only worker has Init state
+	// Fallback still returns the worker, but with a warning
+	if selected == nil {
+		t.Fatal("expected fallback to worker even with IB Init")
 	}
 }
